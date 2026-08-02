@@ -90,3 +90,45 @@ def test_real_boundary_split_reconstructs(size: int) -> None:
     else:
         assert "".join(_strip_header(p) for p in parts) == text
         assert all(len(p) <= TELEGRAM_MAX_MESSAGE_LENGTH for p in parts)
+
+
+def _trailing_backslashes(s: str) -> int:
+    """Count the run of ``\\`` at the end of ``s`` (parity tells escape safety)."""
+    n = 0
+    for ch in reversed(s):
+        if ch != "\\":
+            break
+        n += 1
+    return n
+
+
+def test_split_markdownv2_never_dangles_an_escape() -> None:
+    # A long single line of escaped dots (\. pairs, no newlines) forces hard
+    # splits. No piece may end mid-escape, i.e. with an odd run of backslashes
+    # (FR-14 best-effort safe-split), and parts still reconstruct exactly.
+    from tg_logging_handler.formatting import escape
+
+    escaped = escape("." * 500, "MarkdownV2")  # -> r"\.\.\." ...
+    parts = split_text(escaped, 100, parse_mode="MarkdownV2")
+    bodies = [_strip_header(p) for p in parts]
+    assert "".join(bodies) == escaped
+    assert all(_trailing_backslashes(b) % 2 == 0 for b in bodies)
+    assert all(len(p) <= 100 for p in parts)
+
+
+def test_split_escapes_its_headers_for_markdownv2() -> None:
+    from tg_logging_handler.formatting import escape
+
+    parts = split_text("z" * 250, 100, parse_mode="MarkdownV2")
+    total = len(parts)
+    for index, part in enumerate(parts, start=1):
+        header = part.split("\n", 1)[0]
+        assert header == escape(f"({index}/{total})", "MarkdownV2")
+
+
+def test_truncate_escapes_its_marker_for_markdownv2() -> None:
+    from tg_logging_handler.formatting import escape
+
+    out = truncate_text("w" * 500, 100, parse_mode="MarkdownV2")
+    assert out.endswith(escape("\n… [truncated]", "MarkdownV2"))
+    assert len(out) <= 100

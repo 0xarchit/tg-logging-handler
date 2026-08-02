@@ -81,9 +81,10 @@ class TelegramLoggingHandler(logging.Handler):
         if validate:
             validate_token(resolved_token, api_base_url)
 
-        # ponytail: parse_mode escaping lands in M3; here it is forwarded to
-        # sendMessage as-is. Everything else in the signature is live: batching +
-        # retry/backoff/429 (M1), overflow + queue policies + full stats (M2).
+        # Full signature is live: batching + retry/backoff/429 (M1), overflow +
+        # queue policies + full stats (M2), parse_mode escaping (M3). The worker
+        # escapes each record for parse_mode; the sender forwards parse_mode to
+        # sendMessage so Telegram renders the (now-safe) entities.
         self._shutdown_timeout = shutdown_timeout
         self._closed = False
         self._stats = StatsCollector()
@@ -106,6 +107,7 @@ class TelegramLoggingHandler(logging.Handler):
             batch_size=batch_size,
             flush_interval=flush_interval,
             overflow=overflow,
+            parse_mode=parse_mode,
         )
         self._worker.start()
         atexit.register(self.close)
