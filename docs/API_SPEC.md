@@ -44,7 +44,7 @@ class TelegramLoggingHandler(logging.Handler):
 | `level` | `int \| str` | `logging.WARNING` | Passed to `Handler.setLevel`. |
 | `batch_size` | `int` | `1` | Must be `>= 1`. `1` = send immediately, no batching. |
 | `flush_interval` | `float` | `5.0` | Seconds. Must be `>= 0`. `0` = send as soon as anything is queued (still async). |
-| `max_retries` | `int` | `3` | Applies to network/5xx errors only, not 429s (see below). |
+| `max_retries` | `int` | `3` | Applies to network/5xx errors only, not 429s (see below). 429 `Retry-After` waits are capped at 10 consecutive occurrences. |
 | `overflow` | `"split" \| "truncate" \| "drop"` | `"split"` | Behavior when a formatted message exceeds Telegram's ~4096-char cap. |
 | `parse_mode` | `None \| "Markdown" \| "MarkdownV2" \| "HTML"` | `None` | Forwarded to Telegram `sendMessage`; handler escapes formatter output accordingly. |
 | `queue_maxsize` | `int` | `10000` | Bounded queue size. `0` means unbounded (document the memory risk if a user sets this). |

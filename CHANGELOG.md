@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **M1 — Batching, retry, rate limiting.** Size/interval batch flushing
   (`batch_size`, `flush_interval`); exponential-backoff retries with jitter for
   network/5xx failures (`max_retries`); 429 handling with `Retry-After`
-  respect; `disable_web_page_preview` on every message.
+  respect (capped at 10 consecutive waits so a stuck 429 can't spin the worker
+  forever, and a non-numeric HTTP-date `Retry-After` falls back to 1s);
+  `disable_web_page_preview` on every message.
 - **M2 — Overflow handling, queue policies, full stats.**
   - Oversized-message policies (Telegram caps `sendMessage` at ~4096 chars):
     `split` (numbered `(1/3)` parts that reconstruct the original exactly),

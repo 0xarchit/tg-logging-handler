@@ -11,10 +11,6 @@ class TelegramConfigError(Exception):
     stderr + counted) and never raised into application code.
     """
 
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
-        self.message = message
-
 
 class TelegramSendError(Exception):
     """Internal-only: a ``sendMessage`` attempt failed and has been classified.

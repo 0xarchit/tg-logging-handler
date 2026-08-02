@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 import httpx
 
@@ -36,7 +37,8 @@ def resolve_credentials(
         )
     if not _looks_like_bot_token(token):
         raise TelegramConfigError(
-            f"Invalid bot token format: {token!r}. Expected '<bot_id>:<auth_key>'."
+            f"Invalid bot token format: {token[:4]!r}…{token[-4:]!r}. "
+            f"Expected '<bot_id>:<auth_key>'."
         )
 
     resolved_chat = chat_id if chat_id is not None else os.environ.get("TG_CHAT_ID")
@@ -50,8 +52,7 @@ def resolve_credentials(
 
 def _looks_like_bot_token(token: str) -> bool:
     """Heuristic: Telegram bot tokens are ``'<numeric bot_id>:<auth>'``."""
-    head, sep, _tail = token.partition(":")
-    return bool(sep) and bool(head) and head.isdigit()
+    return re.fullmatch(r"\d+:.+", token) is not None
 
 
 def validate_token(token: str, api_base_url: str) -> None:
