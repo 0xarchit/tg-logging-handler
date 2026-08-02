@@ -1,6 +1,8 @@
-"""The worker thread: consumes the queue, formats records, drives the sender.
+"""The worker thread: consumes the queue, batches records, drives the sender.
 
-M0 shape: one record in, one ``sendMessage`` out (no batching yet). The loop is
+M1: the loop drains queued records into a :class:`BatchAccumulator` and sends
+each flushed batch as one or more ``sendMessage`` calls, with retry/backoff/429
+handling inside :meth:`TelegramSender.send_with_retry`. The loop is
 exception-safe end to end — an unexpected error reports to stderr, increments
 ``failed``, and the loop continues; it must never kill the thread
 (CODING_STANDARDS.md §4, ARCHITECTURE.md §3.4/§4).
@@ -14,6 +16,7 @@ from logging import LogRecord
 from typing import Callable
 
 from . import _diagnostics
+from .batching import BatchAccumulator
 from .sender import TelegramSender
 from .stats import StatsCollector
 
@@ -34,6 +37,7 @@ class WorkerThread(threading.Thread):
         sender: TelegramSender,
         stats: StatsCollector,
         format_record: Callable[[LogRecord], str],
+        batch_size: int,
         flush_interval: float,
     ) -> None:
         super().__init__(name="tg-logging-handler-worker", daemon=True)
@@ -41,8 +45,8 @@ class WorkerThread(threading.Thread):
         self._sender = sender
         self._stats = stats
         self._format_record = format_record
-        # queue.get needs a positive timeout; treat flush_interval==0 as a short poll.
-        self._get_timeout = flush_interval if flush_interval > 0 else 0.1
+        # batch_size==1 (default) makes the accumulator flush every record.
+        self._accumulator = BatchAccumulator(batch_size=batch_size, flush_interval=flush_interval)
 
     def run(self) -> None:
         try:
@@ -52,28 +56,45 @@ class WorkerThread(threading.Thread):
 
     def _loop(self) -> None:
         while True:
-            try:
-                item = self._queue.get(timeout=self._get_timeout)
-            except queue.Empty:
+            # Empty batch -> block up to 1s waiting for a record (a quiet
+            # handler must not busy-poll); partial batch -> collect until size
+            # or interval, whichever comes first (FR-9). Shutdown flushes any
+            # partial batch first (FR-16 drain), then stops.
+            batch, shutdown = self._accumulator.collect(self._queue, SHUTDOWN, timeout=1.0)
+            if batch:
+                try:
+                    self._process_batch(batch)
+                except Exception as exc:  # broad by design, see comment below
+                    # A single bad record (format error) must never take the
+                    # worker thread down (ARCHITECTURE.md §4 formatter-failure).
+                    self._stats.increment("failed")
+                    _diagnostics.report(f"failed to send batch: {exc}")
+                finally:
+                    for _ in batch:
+                        self._queue.task_done()
+            elif shutdown:
+                return
+            else:
+                # timed out with an empty batch — loop and wait again
                 continue
 
-            if item is SHUTDOWN:
-                self._queue.task_done()
-                return
+    def _process_batch(self, batch: list[LogRecord]) -> None:
+        """Format every record, then send the batch as one message (FR-7/8/9).
 
-            # Broad by design: a single bad record (format error, transient
-            # network failure) must never take the worker thread down.
-            try:
-                self._process(item)
-            except Exception as exc:  # broad by design, see comment above
-                self._stats.increment("failed")
-                _diagnostics.report(f"failed to send log record: {exc}")
-            finally:
-                self._queue.task_done()
-
-    def _process(self, item: object) -> None:
-        assert isinstance(item, LogRecord)  # only LogRecords are enqueued
-        text = self._format_record(item)
-        self._sender.send(text)
-        self._stats.increment("sent")
-        self._stats.increment("batches_sent")
+        Formatting happens once per record, up front, so a formatter that
+        raises fails the whole batch before any send attempt (the _loop catch
+        increments ``failed`` and the worker keeps running).
+        """
+        lines = [self._format_record(r) for r in batch]
+        text = "\n".join(lines)
+        outcome = self._sender.send_with_retry(text)
+        self._stats.increment("retries", outcome.retries)
+        if outcome.delivered:
+            self._stats.increment("sent", len(batch))
+            self._stats.increment("batches_sent")
+        else:
+            # Retries exhausted or permanent 4xx: the batch was dropped, so it
+            # counts as failed, not sent (ARCHITECTURE.md §4, FR-12). The sender
+            # already reported the underlying cause to stderr.
+            self._stats.increment("failed", len(batch))
+            _diagnostics.report(f"dropping batch of {len(batch)} record(s) after send failure")

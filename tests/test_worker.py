@@ -12,6 +12,7 @@ from typing import Callable
 
 import pytest
 
+from tg_logging_handler.sender import SendOutcome
 from tg_logging_handler.stats import StatsCollector
 from tg_logging_handler.worker import SHUTDOWN, WorkerThread
 
@@ -22,10 +23,11 @@ class _FakeSender:
         self.sent: list[str] = []
         self.closed = False
 
-    def send(self, text: str) -> None:
+    def send_with_retry(self, text: str) -> SendOutcome:
         if self.fail:
-            raise RuntimeError("simulated send failure")
+            return SendOutcome(delivered=False, retries=0)
         self.sent.append(text)
+        return SendOutcome(delivered=True, retries=0)
 
     def close(self) -> None:
         self.closed = True
@@ -42,7 +44,7 @@ def _run_worker(
 ) -> StatsCollector:
     q: queue.Queue[object] = queue.Queue()
     stats = StatsCollector()
-    worker = WorkerThread(q, sender, stats, format_record, flush_interval=0.01)  # type: ignore[arg-type]
+    worker = WorkerThread(q, sender, stats, format_record, batch_size=1, flush_interval=0.01)  # type: ignore[arg-type]
     worker.start()
     for item in items:
         q.put(item)
@@ -76,7 +78,7 @@ def test_worker_survives_sender_error(capsys: pytest.CaptureFixture[str]) -> Non
     snapshot = stats.snapshot()
     assert snapshot.failed == 2
     assert snapshot.sent == 0
-    assert "simulated send failure" in capsys.readouterr().err
+    assert "after send failure" in capsys.readouterr().err
 
 
 def test_worker_closes_sender_on_exit() -> None:
