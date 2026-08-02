@@ -75,11 +75,47 @@ class TestStats:
 class TestQueuePolicy:
     def test_put_drop_newest_succeeds_when_space(self) -> None:
         q: queue.Queue[int] = queue.Queue(maxsize=1)
-        assert queue_policy.put_drop_newest(q, 1) is True
+        result = queue_policy.put_drop_newest(q, 1)
+        assert result.enqueued is True
+        assert result.dropped == 0
         assert q.get_nowait() == 1
 
     def test_put_drop_newest_drops_when_full(self) -> None:
         q: queue.Queue[int] = queue.Queue(maxsize=1)
         q.put_nowait(1)
-        assert queue_policy.put_drop_newest(q, 2) is False
+        result = queue_policy.put_drop_newest(q, 2)
+        assert result.enqueued is False
+        assert result.dropped == 1
         assert q.qsize() == 1
+        assert q.get_nowait() == 1  # the older record survives
+
+    def test_put_drop_oldest_evicts_to_make_room(self) -> None:
+        q: queue.Queue[int] = queue.Queue(maxsize=2)
+        q.put_nowait(1)
+        q.put_nowait(2)
+        result = queue_policy.put_drop_oldest(q, 3)
+        assert result.enqueued is True
+        assert result.dropped == 1  # evicted the oldest (1)
+        assert list(q.queue) == [2, 3]
+
+    def test_put_drop_oldest_no_eviction_when_space(self) -> None:
+        q: queue.Queue[int] = queue.Queue(maxsize=2)
+        q.put_nowait(1)
+        result = queue_policy.put_drop_oldest(q, 2)
+        assert result.enqueued is True
+        assert result.dropped == 0
+
+    def test_put_block_enqueues(self) -> None:
+        q: queue.Queue[int] = queue.Queue(maxsize=1)
+        result = queue_policy.put_block(q, 1)
+        assert result.enqueued is True
+        assert result.dropped == 0
+        assert q.get_nowait() == 1
+
+    def test_select_put_policy_returns_callable(self) -> None:
+        for name in ("block", "drop_newest", "drop_oldest"):
+            assert callable(queue_policy.select_put_policy(name))
+
+    def test_select_put_policy_rejects_unknown_name(self) -> None:
+        with pytest.raises(ValueError, match="unknown queue_full_policy"):
+            queue_policy.select_put_policy("drop_middle")

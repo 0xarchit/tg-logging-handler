@@ -81,14 +81,16 @@ class TelegramLoggingHandler(logging.Handler):
         if validate:
             validate_token(resolved_token, api_base_url)
 
-        # ponytail: overflow→M2, queue_full_policy other-than-drop_newest→P3 are
-        # still accepted-and-stored only. batch_size/flush_interval/max_retries are
-        # live from M1 (batching + retry/backoff/429). Full signature keeps
-        # dictConfig configs stable across milestones.
+        # ponytail: parse_mode escaping lands in M3; here it is forwarded to
+        # sendMessage as-is. Everything else in the signature is live: batching +
+        # retry/backoff/429 (M1), overflow + queue policies + full stats (M2).
         self._shutdown_timeout = shutdown_timeout
         self._closed = False
         self._stats = StatsCollector()
         self._queue: queue.Queue[object] = queue.Queue(maxsize=queue_maxsize)
+        # Validate the policy name now so a typo fails fast at construction, not
+        # silently at the first queue overflow.
+        self._put_policy = queue_policy.select_put_policy(queue_full_policy)
         self._sender = TelegramSender(
             resolved_token,
             resolved_chat,
@@ -103,6 +105,7 @@ class TelegramLoggingHandler(logging.Handler):
             format_record=self.format,
             batch_size=batch_size,
             flush_interval=flush_interval,
+            overflow=overflow,
         )
         self._worker.start()
         atexit.register(self.close)
@@ -111,10 +114,12 @@ class TelegramLoggingHandler(logging.Handler):
         """Snapshot ``record`` and enqueue it. Never raises (stdlib contract)."""
         try:
             item = self._snapshot(record)
-            if queue_policy.put_drop_newest(self._queue, item):
+            result = self._put_policy(self._queue, item)
+            # drop_oldest can lose an older record even while enqueueing the new
+            # one, so count both outcomes from the PutResult (FR-20).
+            if result.enqueued:
                 self._stats.increment("queued")
-            else:
-                self._stats.increment("dropped")
+            self._stats.increment("dropped", result.dropped)
         except Exception:  # emit must never propagate (ARCHITECTURE §3.2)
             self.handleError(record)
 

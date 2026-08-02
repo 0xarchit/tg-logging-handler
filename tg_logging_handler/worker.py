@@ -16,7 +16,9 @@ from logging import LogRecord
 from typing import Callable
 
 from . import _diagnostics
+from ._constants import TELEGRAM_MAX_MESSAGE_LENGTH
 from .batching import BatchAccumulator
+from .overflow import prepare_messages
 from .sender import TelegramSender
 from .stats import StatsCollector
 
@@ -39,6 +41,7 @@ class WorkerThread(threading.Thread):
         format_record: Callable[[LogRecord], str],
         batch_size: int,
         flush_interval: float,
+        overflow: str = "split",
     ) -> None:
         super().__init__(name="tg-logging-handler-worker", daemon=True)
         self._queue = record_queue
@@ -47,6 +50,7 @@ class WorkerThread(threading.Thread):
         self._format_record = format_record
         # batch_size==1 (default) makes the accumulator flush every record.
         self._accumulator = BatchAccumulator(batch_size=batch_size, flush_interval=flush_interval)
+        self._overflow = overflow
 
     def run(self) -> None:
         try:
@@ -79,22 +83,40 @@ class WorkerThread(threading.Thread):
                 continue
 
     def _process_batch(self, batch: list[LogRecord]) -> None:
-        """Format every record, then send the batch as one message (FR-7/8/9).
+        """Format the batch, apply the overflow policy, and send each message.
 
         Formatting happens once per record, up front, so a formatter that
         raises fails the whole batch before any send attempt (the _loop catch
-        increments ``failed`` and the worker keeps running).
+        increments ``failed`` and the worker keeps running). An oversized batch
+        becomes one or more messages per the ``overflow`` policy (FR-13): split
+        into numbered parts, truncated to one message, or dropped entirely. The
+        batch's records count as ``sent`` only if every part is delivered;
+        otherwise they count as ``failed`` (conservative: a partially delivered
+        split still flags the batch, ARCHITECTURE.md §4).
         """
         lines = [self._format_record(r) for r in batch]
         text = "\n".join(lines)
-        outcome = self._sender.send_with_retry(text)
-        self._stats.increment("retries", outcome.retries)
-        if outcome.delivered:
+        messages = prepare_messages(text, self._overflow, TELEGRAM_MAX_MESSAGE_LENGTH)
+        if not messages:
+            # overflow="drop" on oversized text: nothing goes on the wire (FR-13).
+            self._stats.increment("dropped", len(batch))
+            _diagnostics.report(
+                f"dropping oversized batch of {len(batch)} record(s) (overflow='drop')"
+            )
+            return
+
+        delivered_all = True
+        for message in messages:
+            outcome = self._sender.send_with_retry(message)
+            self._stats.increment("retries", outcome.retries)
+            delivered_all = delivered_all and outcome.delivered
+
+        if delivered_all:
             self._stats.increment("sent", len(batch))
             self._stats.increment("batches_sent")
         else:
-            # Retries exhausted or permanent 4xx: the batch was dropped, so it
-            # counts as failed, not sent (ARCHITECTURE.md §4, FR-12). The sender
-            # already reported the underlying cause to stderr.
+            # Retries exhausted or permanent 4xx on at least one part: the batch
+            # is treated as dropped, so it counts as failed, not sent
+            # (ARCHITECTURE.md §4, FR-12). The sender already reported the cause.
             self._stats.increment("failed", len(batch))
             _diagnostics.report(f"dropping batch of {len(batch)} record(s) after send failure")
