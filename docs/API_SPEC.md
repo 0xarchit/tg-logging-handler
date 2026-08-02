@@ -1,21 +1,21 @@
-# API Spec — `tglog_handler`
+# API Spec — `tg_logging_handler`
 
 ## Public Symbols
 
-Exported from `tglog_handler/__init__.py`:
+Exported from `tg_logging_handler/__init__.py`:
 
 ```python
-from tglog_handler import TelegramHandler, HandlerStats, TelegramConfigError
+from tg_logging_handler import TelegramLoggingHandler, HandlerStats, TelegramConfigError
 ```
 
 Everything else in the package is private (prefix internal modules' non-public helpers with `_` where reasonable, but full underscore-prefixing of every internal symbol is not required — module-level privacy via `__init__.py`'s export list is sufficient).
 
 ---
 
-## `TelegramHandler`
+## `TelegramLoggingHandler`
 
 ```python
-class TelegramHandler(logging.Handler):
+class TelegramLoggingHandler(logging.Handler):
     def __init__(
         self,
         token: str | None = None,
@@ -107,14 +107,14 @@ This is the **only** exception type users should ever need to catch. All runtime
 ### Minimal
 ```python
 import logging
-from tglog_handler import TelegramHandler
+from tg_logging_handler import TelegramLoggingHandler
 
-logging.getLogger().addHandler(TelegramHandler())  # reads TG_TOKEN / TG_CHAT_ID
+logging.getLogger().addHandler(TelegramLoggingHandler())  # reads TG_TOKEN / TG_CHAT_ID
 ```
 
 ### Explicit config with batching
 ```python
-handler = TelegramHandler(
+handler = TelegramLoggingHandler(
     token="123:abc",
     chat_id=-100123456789,
     level=logging.ERROR,
@@ -131,7 +131,7 @@ LOGGING = {
     "version": 1,
     "handlers": {
         "telegram": {
-            "()": "tglog_handler.TelegramHandler",
+            "()": "tg_logging_handler.TelegramLoggingHandler",
             "level": "ERROR",
             "batch_size": 5,
         },
@@ -142,7 +142,7 @@ LOGGING = {
 
 ### Testing / offline
 ```python
-handler = TelegramHandler(token="test", chat_id="1", validate=False, api_base_url="http://localhost:9999")
+handler = TelegramLoggingHandler(token="test", chat_id="1", validate=False, api_base_url="http://localhost:9999")
 ```
 
 ---

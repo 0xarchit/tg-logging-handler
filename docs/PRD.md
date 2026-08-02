@@ -1,10 +1,10 @@
-# PRD — `tglog-handler`
+# PRD — `tg-logging-handler`
 
 Production-grade Telegram destination for Python's standard `logging` module.
 
 Status: Draft v1.0 — ready for coding-agent implementation
 Owner: Archit
-Package name (PyPI): `tglog-handler` (import name: `tglog_handler`) — **verify availability before first publish**; do not use `telegram-logging` (taken, inactive) or `tglogging` (taken).
+Package name (PyPI): `tg-logging-handler` (import name: `tg_logging_handler`) — **verify availability before first publish**; do not use `telegram-logging` (taken, inactive) or `tglogging` (taken).
 
 ---
 
@@ -40,7 +40,7 @@ Ship a `logging.Handler` subclass that a developer can add to their existing log
 
 ## 5. User Stories (v1 scope)
 
-1. As a developer, I add `TelegramHandler(token=..., chat_id=...)` to my logger and start receiving `ERROR`+ logs in Telegram within seconds, with zero other config.
+1. As a developer, I add `TelegramLoggingHandler(token=..., chat_id=...)` to my logger and start receiving `ERROR`+ logs in Telegram within seconds, with zero other config.
 2. As a developer, I don't want a burst of 50 errors/sec to either flood my Telegram chat or crash my app — the handler batches and paces automatically.
 3. As a developer, a single giant traceback should arrive intact (split into parts), not get silently dropped because it exceeds 4096 characters.
 4. As a developer, if Telegram is down or rate-limiting me, my application keeps running normally; failed sends are retried with backoff, and if retries are exhausted the log is handled per my configured overflow/queue policy, not by crashing my app.
@@ -52,7 +52,7 @@ Ship a `logging.Handler` subclass that a developer can add to their existing log
 ## 6. Functional Requirements
 
 ### 6.1 Core Handler
-- FR-1: `TelegramHandler(logging.Handler)` — standard handler interface (`emit`, `close`, `setLevel`, `setFormatter`).
+- FR-1: `TelegramLoggingHandler(logging.Handler)` — standard handler interface (`emit`, `close`, `setLevel`, `setFormatter`).
 - FR-2: Constructor accepts `token`, `chat_id`, falls back to `TG_TOKEN`/`TG_CHAT_ID` env vars if omitted.
 - FR-3: Startup validation — verify token format and, best-effort, validate via a single lightweight Bot API call (`getMe`); raise `TelegramConfigError` on failure. Validation must be opt-out-able (`validate=False`) for offline/test environments.
 
@@ -69,7 +69,7 @@ Ship a `logging.Handler` subclass that a developer can add to their existing log
 ### 6.4 Retry & Rate Limiting
 - FR-10: On send failure (network error, 5xx), retry with exponential backoff + jitter, up to `max_retries` (default 3).
 - FR-11: On `429 Too Many Requests`, respect the `retry_after` value from Telegram's response before retrying; this does not count against `max_retries`.
-- FR-12: After exhausting retries, apply the configured queue-overflow / failure policy (log a warning to stderr via `logging.getLogger("tglog_handler")`, then drop or re-queue per config) — never raise into the application thread.
+- FR-12: After exhausting retries, apply the configured queue-overflow / failure policy (log a warning to stderr via `logging.getLogger("tg_logging_handler")`, then drop or re-queue per config) — never raise into the application thread.
 
 ### 6.5 Message Size / Overflow
 - FR-13: Messages exceeding Telegram's ~4096-char limit are handled per `overflow` setting: `"split"` (default, numbered parts), `"truncate"`, or `"drop"`.
@@ -107,7 +107,7 @@ Ship a `logging.Handler` subclass that a developer can add to their existing log
 
 ## 9. Milestones (see ROADMAP.md for detail)
 
-1. **M0** — Skeleton package, `TelegramHandler` sending single messages synchronously-under-the-hood-but-nonblocking-via-thread, no batching. Tests + CI green.
+1. **M0** — Skeleton package, `TelegramLoggingHandler` sending single messages synchronously-under-the-hood-but-nonblocking-via-thread, no batching. Tests + CI green.
 2. **M1** — Batching + retry + rate-limit handling.
 3. **M2** — Overflow handling (split/truncate/drop) + queue policies + stats.
 4. **M3** — Docs, examples (Django/FastAPI/Celery), PyPI publish, README polish.

@@ -1,4 +1,4 @@
-# GitHub Setup — `tglog-handler`
+# GitHub Setup — `tg-logging-handler`
 
 End-to-end guide for repo structure, branch strategy, GitHub Environments, CI/CD pipelines, and PyPI publishing. Written so a first-time package author (or a coding agent) can follow it step by step with no gaps.
 
@@ -7,7 +7,7 @@ End-to-end guide for repo structure, branch strategy, GitHub Environments, CI/CD
 ## 1. Repo Structure
 
 ```
-tglog-handler/
+tg-logging-handler/
 ├── .github/
 │   ├── workflows/
 │   │   ├── ci.yml              # lint + typecheck + test, every push/PR
@@ -18,7 +18,7 @@ tglog-handler/
 │   │   └── feature_request.md
 │   ├── PULL_REQUEST_TEMPLATE.md
 │   └── dependabot.yml
-├── tglog_handler/                # see ARCHITECTURE.md
+├── tg_logging_handler/                # see ARCHITECTURE.md
 ├── tests/
 ├── docs/                          # PRD.md, ARCHITECTURE.md, API_SPEC.md, CODING_STANDARDS.md, TESTING.md, ROADMAP.md
 ├── .pre-commit-config.yaml
@@ -116,10 +116,10 @@ jobs:
         run: ruff format --check .
 
       - name: Type check (mypy --strict)
-        run: mypy --strict tglog_handler
+        run: mypy --strict tg_logging_handler
 
       - name: Test with coverage
-        run: pytest --cov=tglog_handler --cov-report=term-missing --cov-report=xml --cov-fail-under=90
+        run: pytest --cov=tg_logging_handler --cov-report=term-missing --cov-report=xml --cov-fail-under=90
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
@@ -161,9 +161,9 @@ Use **PyPI Trusted Publishing** (OIDC) instead of long-lived API tokens. No secr
    - https://test.pypi.org — for the `testpypi` environment.
    - https://pypi.org — for the `pypi` environment (do this once you're confident in the final package name — see PRD.md open question on naming).
 2. On each site: **Account → Publishing → Add a new pending publisher**:
-   - PyPI Project Name: `tglog-handler` (or final confirmed name)
+   - PyPI Project Name: `tg-logging-handler` (or final confirmed name)
    - Owner: your GitHub username/org
-   - Repository name: `tglog-handler`
+   - Repository name: `tg-logging-handler`
    - Workflow name: `publish-pypi.yml` (or `publish-testpypi.yml` on the TestPyPI side)
    - Environment name: `pypi` (or `testpypi`)
 3. No API token needed — the workflow below authenticates via OIDC automatically.
@@ -234,13 +234,13 @@ Because this workflow targets the `pypi` environment (with required reviewers, t
 Manual checklist (v1 has no version automation — keep it simple until there's a reason not to):
 
 1. On `main`, confirm CI is green and TestPyPI publish succeeded on the latest commit.
-2. `pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ tglog-handler` in a fresh venv, run the README quickstart manually against a throwaway bot (TESTING.md §5 pre-release checklist).
+2. `pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ tg-logging-handler` in a fresh venv, run the README quickstart manually against a throwaway bot (TESTING.md §5 pre-release checklist).
 3. Bump `version` in `pyproject.toml`.
 4. Add a `CHANGELOG.md` entry under a new version heading (Keep a Changelog format).
 5. Commit: `chore: release v0.1.0`.
 6. Tag: `git tag v0.1.0 && git push origin v0.1.0`.
 7. Go to the Actions tab → approve the pending `pypi` environment deployment.
-8. Verify on https://pypi.org/project/tglog-handler/ that the new version is live.
+8. Verify on https://pypi.org/project/tg-logging-handler/ that the new version is live.
 9. Create a GitHub Release from the tag (Releases → Draft a new release → select tag → paste CHANGELOG entry as notes).
 
 ---
@@ -291,7 +291,7 @@ repos:
       - id: mypy
         additional_dependencies: [httpx]
         args: [--strict]
-        files: ^tglog_handler/
+        files: ^tg_logging_handler/
 ```
 Install once locally: `pre-commit install`.
 
@@ -305,8 +305,8 @@ Install once locally: `pre-commit install`.
 
 ## Checklist
 - [ ] `ruff check .` / `ruff format --check .` pass locally
-- [ ] `mypy --strict tglog_handler` passes locally
-- [ ] `pytest --cov=tglog_handler --cov-fail-under=90` passes locally
+- [ ] `mypy --strict tg_logging_handler` passes locally
+- [ ] `pytest --cov=tg_logging_handler --cov-fail-under=90` passes locally
 - [ ] CHANGELOG.md updated (if user-facing change)
 ```
 
@@ -327,7 +327,7 @@ Install once locally: `pre-commit install`.
 
 ## 10. Order of Operations (do this once, in sequence)
 
-1. Create the GitHub repo, push initial scaffold (empty `tglog_handler/` package + `pyproject.toml` + this `docs/` folder).
+1. Create the GitHub repo, push initial scaffold (empty `tg_logging_handler/` package + `pyproject.toml` + this `docs/` folder).
 2. Set up branch protection (§3) and both Environments (§4) before writing any real code — this way CI is enforced from commit #1, not bolted on later.
 3. Add `ci.yml` (§5), confirm it goes green on a trivial first PR.
 4. Implement M0 (per ROADMAP.md) behind PRs into `main`.

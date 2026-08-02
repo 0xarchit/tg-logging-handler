@@ -1,8 +1,8 @@
-# Roadmap — `tglog-handler`
+# Roadmap — `tg-logging-handler`
 
 ## M0 — Skeleton (target: first green CI)
 - Package scaffold (`pyproject.toml`, module layout per ARCHITECTURE.md §2).
-- `TelegramHandler` with constructor validation (FR-1/2/3), `TelegramConfigError`.
+- `TelegramLoggingHandler` with constructor validation (FR-1/2/3), `TelegramConfigError`.
 - Worker thread + queue wiring, no batching (`batch_size=1` path only), single-message send via `sender.py`, no retry yet.
 - Basic test suite for the above (subset of TESTING.md §2.2/2.3 scenario 1).
 - CI pipeline green (ruff, mypy, pytest) per TESTING.md §4.
@@ -28,7 +28,7 @@
 - CHANGELOG.md initialized, version 0.1.0 tagged.
 - Manual pre-release checklist (TESTING.md §5) completed.
 - Confirm final package name availability on PyPI, publish.
-- **Exit criteria**: `pip install tglog-handler` (or chosen final name) works from a clean environment; README examples verified against the real package.
+- **Exit criteria**: `pip install tg-logging-handler` (or chosen final name) works from a clean environment; README examples verified against the real package.
 
 ## M4 — Post-v1 (not committed, prioritize based on real usage/issues)
 Ordered roughly by expected value based on the competitive analysis (none of these exist well-implemented in any competitor today):
@@ -37,7 +37,7 @@ Ordered roughly by expected value based on the competitive analysis (none of the
 3. **Summary footer / batch headers** — small UX polish for high-volume batches (e.g. "🚨 18 logs — Errors: 6, Warnings: 8...").
 4. **Context metadata** (hostname, pid, module, line number) — valuable for distributed/multi-service setups; opt-in via a constructor flag to avoid bloating default message size.
 5. **Multi-chat support** — send the same handler's output to multiple `chat_id`s (or route by level to different chats). Deferred from v1 deliberately (PRD §10) to keep the initial surface area small; revisit once v1 API has stabilized and real usage confirms demand.
-6. **AsyncIO backend** — optional `AsyncTelegramHandler` or an internal async worker mode for apps already running an event loop end-to-end, avoiding a redundant thread. Only pursue if there's a concrete request — thread-based v1 already satisfies the sync-codebase majority of the target audience.
+6. **AsyncIO backend** — optional `AsyncTelegramLoggingHandler` or an internal async worker mode for apps already running an event loop end-to-end, avoiding a redundant thread. Only pursue if there's a concrete request — thread-based v1 already satisfies the sync-codebase majority of the target audience.
 
 ## Explicitly Not Planned
 - Rich HTML/emoji templating engine — out of scope indefinitely; users can achieve this via `parse_mode="HTML"` and their own formatter.
