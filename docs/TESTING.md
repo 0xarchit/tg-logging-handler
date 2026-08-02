@@ -1,4 +1,4 @@
-# Testing Strategy — `tglog-handler`
+# Testing Strategy — `tg-logging-handler`
 
 ## 1. Principles
 
@@ -45,14 +45,14 @@
 ## 3. Fixtures (`conftest.py`)
 
 - `mock_transport` — `respx` router pre-wired for `getMe` (success) and `sendMessage` (success), overridable per-test for failure scenarios.
-- `fast_handler_factory` — factory fixture producing a `TelegramHandler` with `validate=False`, tiny `flush_interval`, and the mock transport wired in, so most tests don't repeat constructor boilerplate.
+- `fast_handler_factory` — factory fixture producing a `TelegramLoggingHandler` with `validate=False`, tiny `flush_interval`, and the mock transport wired in, so most tests don't repeat constructor boilerplate.
 - `capture_stderr` — thin wrapper around `capsys` for asserting internal diagnostic messages.
 - `fake_sleep` — monkeypatches the sleep function used internally by `sender.py`'s backoff logic (must be injectable, not a hardcoded `time.sleep` call — see CODING_STANDARDS.md §5) to advance instantly while recording requested durations for assertions.
 
 ## 4. CI Requirements
 
 - Matrix: Python 3.9, 3.10, 3.11, 3.12, 3.13 (drop versions as they go EOL; PRD's floor is 3.9 — confirm this is still reasonable at implementation time and adjust NFR-2 if not).
-- Steps: `ruff check`, `ruff format --check`, `mypy --strict tglog_handler`, `pytest --cov=tglog_handler --cov-report=term-missing --cov-fail-under=90`.
+- Steps: `ruff check`, `ruff format --check`, `mypy --strict tg_logging_handler`, `pytest --cov=tg_logging_handler --cov-report=term-missing --cov-fail-under=90`.
 - No network access in the CI test job (optionally enforce with a firewall/hosts-block in CI config as a belt-and-suspenders check that no test accidentally hits the real API).
 
 ## 5. Manual / Pre-Release Checklist (not automated, but required before PyPI publish)

@@ -1,4 +1,4 @@
-# Architecture — `tglog-handler`
+# Architecture — `tg-logging-handler`
 
 ## 1. Component Overview
 
@@ -6,7 +6,7 @@
 Application thread(s)
         │  logger.error(...)
         ▼
-  TelegramHandler.emit()          ◄── must be near-instant, never blocks
+  TelegramLoggingHandler.emit()          ◄── must be near-instant, never blocks
         │  enqueue LogRecord (or pre-formatted item)
         ▼
    RecordQueue (bounded, thread-safe: queue.Queue)
@@ -25,14 +25,14 @@ Application thread(s)
         └─► StatsCollector     (counters, read by handler.stats)
 ```
 
-One `TelegramHandler` instance = one queue = one worker thread = one Telegram chat destination. Multiple handlers (e.g. one per chat, or one for WARNING/one for CRITICAL) can be attached to the same or different loggers independently — no shared global state between instances.
+One `TelegramLoggingHandler` instance = one queue = one worker thread = one Telegram chat destination. Multiple handlers (e.g. one per chat, or one for WARNING/one for CRITICAL) can be attached to the same or different loggers independently — no shared global state between instances.
 
 ## 2. Module Layout
 
 ```
-tglog_handler/
-├── __init__.py          # public API surface: TelegramHandler, exceptions
-├── handler.py            # TelegramHandler(logging.Handler) — thin, delegates to worker
+tg_logging_handler/
+├── __init__.py          # public API surface: TelegramLoggingHandler, exceptions
+├── handler.py            # TelegramLoggingHandler(logging.Handler) — thin, delegates to worker
 ├── worker.py              # WorkerThread: consumes queue, drives batch/send loop
 ├── batching.py            # BatchAccumulator: size/interval trigger logic
 ├── formatting.py          # MessageFormatter, parse-mode escaping
@@ -78,10 +78,10 @@ while not self._stop_event.is_set() or not queue.empty():
     for chunk in text_chunks:
         sender.send_with_retry(chunk)  # never raises; internally logs failures via internal logger
 ```
-On `close()`: set `_stop_event`, wait up to `shutdown_timeout` for the worker to drain, then join with timeout. If timeout elapses, log a warning (via the internal `tglog_handler` logger, not the user's handler — avoid recursive logging loops) and abandon remaining queue contents.
+On `close()`: set `_stop_event`, wait up to `shutdown_timeout` for the worker to drain, then join with timeout. If timeout elapses, log a warning (via the internal `tg_logging_handler` logger, not the user's handler — avoid recursive logging loops) and abandon remaining queue contents.
 
 ### 3.5 Avoiding recursive logging loops
-The package's own internal diagnostic logging (e.g. "failed to send to Telegram after 3 retries") **must** use a logger (`logging.getLogger("tglog_handler")`) that is guaranteed never to also be routed back into this same `TelegramHandler` instance in the package's own tests/examples. Document this prominently: if a user attaches `TelegramHandler` to the root logger, internal diagnostics still going through Python's root logger could recurse. Mitigation: the internal logger propagate=False by default, and/or internal diagnostics use `sys.stderr` directly rather than `logging` at all. **Decision: use `sys.stderr` directly for internal failure diagnostics, not the logging module**, to make recursion structurally impossible. This is a load-bearing decision — implement it exactly this way.
+The package's own internal diagnostic logging (e.g. "failed to send to Telegram after 3 retries") **must** use a logger (`logging.getLogger("tg_logging_handler")`) that is guaranteed never to also be routed back into this same `TelegramLoggingHandler` instance in the package's own tests/examples. Document this prominently: if a user attaches `TelegramLoggingHandler` to the root logger, internal diagnostics still going through Python's root logger could recurse. Mitigation: the internal logger propagate=False by default, and/or internal diagnostics use `sys.stderr` directly rather than `logging` at all. **Decision: use `sys.stderr` directly for internal failure diagnostics, not the logging module**, to make recursion structurally impossible. This is a load-bearing decision — implement it exactly this way.
 
 ### 3.6 HTTP client
 `httpx.Client` (sync), one client instance per handler, created lazily in the worker thread (not in `emit()`/constructor thread) to avoid cross-thread client reuse issues. Configure a sane `timeout` (default: connect 5s, read 10s).
@@ -105,7 +105,7 @@ HTML/Markdown: track open/close tag or entity balance; never split inside an unc
 ## 5. Public API Surface (v1 — keep minimal)
 
 ```python
-class TelegramHandler(logging.Handler):
+class TelegramLoggingHandler(logging.Handler):
     def __init__(
         self,
         token: str | None = None,
