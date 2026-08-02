@@ -25,6 +25,7 @@ __all__ = ["SendOutcome", "TelegramSendError", "TelegramSender"]
 _BASE_DELAY_SECONDS = 0.5  # first retry waits ~0.5s, then ~1s, ~2s ... (capped)
 _MAX_DELAY_SECONDS = 30.0
 _JITTER_FRACTION = 0.25  # ±25% jitter around each backoff delay
+_MAX_RATE_LIMIT_WAITS = 10  # cap consecutive 429 waits so a stuck 429 can't spin forever
 
 
 @dataclass(frozen=True)
@@ -79,11 +80,13 @@ class TelegramSender:
         retries performed (0 on first-try success). Never raises — exhausted or
         permanent failures return ``delivered=False`` so the worker counts them
         as ``failed`` and reports to stderr (FR-10/11/12; ARCHITECTURE.md §4).
-        429s honor ``Retry-After`` without consuming the retry budget (FR-11);
-        permanent 4xx are not retried at all, since retrying a broken request
-        just wastes the budget (ARCHITECTURE.md §4).
+        429s honor ``Retry-After`` without consuming the retry budget (FR-11),
+        capped at ``_MAX_RATE_LIMIT_WAITS`` consecutive waits so a stuck 429
+        cannot spin the worker forever; permanent 4xx are not retried at all,
+        since retrying a broken request just wastes the budget (ARCHITECTURE.md §4).
         """
         attempts = 0
+        rate_limited = 0
         delay = _BASE_DELAY_SECONDS
         while True:
             try:
@@ -91,8 +94,13 @@ class TelegramSender:
                 return SendOutcome(delivered=True, retries=attempts)
             except TelegramSendError as exc:
                 if exc.retry_after is not None:
-                    # 429 rate limit: honor Retry-After, does not consume retry
-                    # budget (FR-11).
+                    # 429 rate limit: honor Retry-After without consuming the
+                    # retry budget (FR-11), but cap consecutive waits so a
+                    # stuck/malicious 429 can't spin the worker forever and
+                    # block drain/shutdown.
+                    if rate_limited >= _MAX_RATE_LIMIT_WAITS:
+                        return SendOutcome(delivered=False, retries=attempts)
+                    rate_limited += 1
                     self._sleep(exc.retry_after)
                     continue
                 if not exc.retryable or attempts >= self._max_retries:
@@ -123,7 +131,12 @@ class TelegramSender:
             raise TelegramSendError(str(exc), retryable=True) from exc
 
         if response.status_code == 429:
-            retry_after = float(response.headers.get("retry-after", "1.0"))
+            try:
+                retry_after = float(response.headers.get("retry-after", "1.0"))
+            except ValueError:
+                # Retry-After may be an HTTP-date (RFC 9110), not seconds. We
+                # don't parse dates — fall back to a conservative 1s default.
+                retry_after = 1.0
             raise TelegramSendError(
                 f"rate limited (429) for {retry_after}s", retryable=True, retry_after=retry_after
             )

@@ -58,7 +58,7 @@ All constructor arguments after `token` / `chat_id` are keyword-only.
 | `level` | `logging.WARNING` | Minimum level (passed to `setLevel`). |
 | `batch_size` | `1` | Max records per message (`>= 1`). `1` = send each record immediately. |
 | `flush_interval` | `5.0` | Max seconds a partial batch waits (`>= 0`). |
-| `max_retries` | `3` | Retry budget for network/5xx errors (`>= 0`). 429s are always honored. |
+| `max_retries` | `3` | Retry budget for network/5xx errors (`>= 0`). 429s honor `Retry-After` without spending this budget (capped at 10 consecutive waits). |
 | `overflow` | `"split"` | Oversized-message policy: `"split"`, `"truncate"`, or `"drop"`. |
 | `parse_mode` | `None` | `None`, `"Markdown"`, `"MarkdownV2"`, or `"HTML"`. Formatter output is escaped for the chosen mode. |
 | `queue_maxsize` | `10_000` | Bounded queue size. `0` = unbounded (memory risk). |

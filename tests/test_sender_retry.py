@@ -126,3 +126,34 @@ def test_parse_mode_included_when_set() -> None:
 
     body = json.loads(route.calls[0].request.content.decode())
     assert body["parse_mode"] == "HTML"
+
+
+@respx.mock
+def test_429_waits_are_capped_so_a_stuck_429_cannot_spin_forever() -> None:
+    # 11 consecutive 429s (cap is 10) must give up, not loop forever.
+    from tg_logging_handler.sender import _MAX_RATE_LIMIT_WAITS
+
+    respx.post(SEND_URL).mock(return_value=httpx.Response(429, headers={"retry-after": "1"}))
+    sleep = _RecordingSleep()
+    outcome = _sender(sleep).send_with_retry("hi")
+    assert outcome.delivered is False  # gave up after the cap
+    assert outcome.retries == 0  # 429s never consume the retry budget
+    assert len(sleep.calls) == _MAX_RATE_LIMIT_WAITS  # slept exactly cap times
+    assert sleep.calls == [1.0] * _MAX_RATE_LIMIT_WAITS
+
+
+@respx.mock
+def test_429_with_non_numeric_retry_after_uses_default() -> None:
+    # RFC 9110 allows an HTTP-date (e.g. "Wed, 21 Oct 2015 07:28:00 GMT");
+    # float() can't parse it, so we must fall back instead of crashing.
+    respx.post(SEND_URL).mock(
+        side_effect=[
+            httpx.Response(429, headers={"retry-after": "Wed, 21 Oct 2015 07:28:00 GMT"}),
+            _ok(),
+        ]
+    )
+    sleep = _RecordingSleep()
+    outcome = _sender(sleep).send_with_retry("hi")
+    assert outcome.delivered is True
+    assert outcome.retries == 0
+    assert sleep.calls == [1.0]  # conservative default

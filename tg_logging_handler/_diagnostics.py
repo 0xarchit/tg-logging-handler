@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import sys
 
-from ._constants import DIAGNOSTIC_PREFIX
-
 __all__ = ["report"]
 
 
@@ -20,4 +18,4 @@ def report(message: str) -> None:
     ``sys.stderr`` is looked up at call time (not import time) so that test
     fixtures capturing stderr see the redirected stream.
     """
-    print(f"[{DIAGNOSTIC_PREFIX}] {message}", file=sys.stderr)
+    print(f"[tg_logging_handler] {message}", file=sys.stderr)

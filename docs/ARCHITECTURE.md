@@ -96,7 +96,7 @@ HTML/Markdown: track open/close tag or entity balance; never split inside an unc
 |---|---|
 | Invalid token/chat_id at construction | `TelegramConfigError` raised immediately (fail fast), unless `validate=False` |
 | Telegram unreachable (network error) | Retry w/ backoff → exhausted → drop or requeue per policy, stderr diagnostic, counters incremented |
-| 429 rate limit | Honor `retry_after`, does not consume retry budget, counters incremented |
+| 429 rate limit | Honor `retry_after`, does not consume retry budget, counters incremented; capped at 10 consecutive waits (then give up) so a stuck 429 can't spin forever. A non-numeric HTTP-date `Retry-After` falls back to a 1s wait |
 | 4xx other than 429 (e.g. bad chat_id discovered post-construction) | Log to stderr, increment `failed`, do not infinite-retry a permanently-broken request |
 | Queue full | Per `queue_full_policy`: block (bounded by caller's willingness to block — document this risk clearly), drop_newest, or drop_oldest |
 | Process exits abruptly (no clean shutdown) | Daemon thread dies with process; at-most-`flush_interval` seconds of buffered logs may be lost — documented, acceptable for v1 |

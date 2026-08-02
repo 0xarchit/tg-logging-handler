@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from threading import Lock
 
 __all__ = ["HandlerStats", "StatsCollector"]
@@ -34,14 +34,7 @@ class StatsCollector:
 
     def __init__(self) -> None:
         self._lock = Lock()
-        self._counts: dict[str, int] = {
-            "queued": 0,
-            "sent": 0,
-            "batches_sent": 0,
-            "retries": 0,
-            "failed": 0,
-            "dropped": 0,
-        }
+        self._counts: dict[str, int] = asdict(HandlerStats())
 
     def increment(self, key: str, amount: int = 1) -> None:
         """Add ``amount`` to counter ``key`` (thread-safe)."""
@@ -52,6 +45,3 @@ class StatsCollector:
         """Return an immutable copy of the current counters."""
         with self._lock:
             return HandlerStats(**self._counts)
-
-    def __repr__(self) -> str:  # pragma: no cover - debug helper
-        return f"StatsCollector({self._counts!r})"
