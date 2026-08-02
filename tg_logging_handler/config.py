@@ -31,15 +31,16 @@ def resolve_credentials(
             obviously invalid format (FR-3).
     """
     token = token or os.environ.get("TG_TOKEN")
+    if token:
+        # Secrets loaded from files or env vars often carry a trailing
+        # newline; strip it so validation and URL building see the real token.
+        token = token.strip()
     if not token:
         raise TelegramConfigError(
             "No bot token provided. Pass token=... or set the TG_TOKEN environment variable."
         )
     if not _looks_like_bot_token(token):
-        raise TelegramConfigError(
-            f"Invalid bot token format: {token[:4]!r}…{token[-4:]!r}. "
-            f"Expected '<bot_id>:<auth_key>'."
-        )
+        raise TelegramConfigError(_invalid_token_message(token))
 
     resolved_chat = chat_id if chat_id is not None else os.environ.get("TG_CHAT_ID")
     if resolved_chat is None or resolved_chat == "":
@@ -53,6 +54,17 @@ def resolve_credentials(
 def _looks_like_bot_token(token: str) -> bool:
     """Heuristic: Telegram bot tokens are ``'<numeric bot_id>:<auth>'``."""
     return re.fullmatch(r"\d+:.+", token) is not None
+
+
+def _invalid_token_message(token: str) -> str:
+    """Build the invalid-token error, redacting the secret.
+
+    Only ever shows the first/last 4 characters, and only when the token is
+    long enough that those windows don't overlap — a short string could be the
+    whole secret, so it is redacted entirely (never embed the raw token).
+    """
+    shown = f"{token[:4]!r}…{token[-4:]!r}" if len(token) >= 12 else "(redacted)"
+    return f"Invalid bot token format: {shown}. Expected '<bot_id>:<auth_key>'."
 
 
 def validate_token(token: str, api_base_url: str) -> None:

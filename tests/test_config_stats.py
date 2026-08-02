@@ -46,6 +46,30 @@ class TestResolveCredentials:
         with pytest.raises(TelegramConfigError):
             resolve_credentials("no-colon-here", 1)
 
+    def test_trailing_newline_token_is_stripped(self) -> None:
+        # Tokens read from files/secrets often carry a trailing newline; it
+        # must not fail validation or leak into the request URL.
+        assert resolve_credentials("111:abc\n", 1) == ("111:abc", "1")
+
+    def test_invalid_short_token_error_is_redacted(self) -> None:
+        # A token too short for a safe partial reveal must not appear in the
+        # error message at all.
+        with pytest.raises(TelegramConfigError) as excinfo:
+            resolve_credentials("abc:def", 1)  # non-digit head, 7 chars -> short + invalid
+        message = str(excinfo.value)
+        assert "abc:def" not in message
+        assert "(redacted)" in message
+
+    def test_invalid_long_token_reveals_only_ends(self) -> None:
+        # Long tokens may show the first/last 4 chars for diagnosability, but
+        # never the middle.
+        with pytest.raises(TelegramConfigError) as excinfo:
+            # No ':' -> invalid format; 24 chars -> long enough to reveal ends.
+            resolve_credentials("AAAAmmmmmmmmmmmmmmmmZZZZ", 1)
+        message = str(excinfo.value)
+        assert "AAAA" in message and "ZZZZ" in message  # ends shown
+        assert "mmmm" not in message  # the middle stays hidden
+
 
 class TestStats:
     def test_initial_snapshot_is_zero(self) -> None:

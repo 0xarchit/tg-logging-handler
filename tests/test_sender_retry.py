@@ -157,3 +157,61 @@ def test_429_with_non_numeric_retry_after_uses_default() -> None:
     assert outcome.delivered is True
     assert outcome.retries == 0
     assert sleep.calls == [1.0]  # conservative default
+
+
+@respx.mock
+def test_429_huge_retry_after_is_clamped_to_max_delay() -> None:
+    # A server (or attacker) sending Retry-After: 86400 must not park the
+    # worker for a day; the wait is clamped to _MAX_DELAY_SECONDS.
+    from tg_logging_handler.sender import _MAX_DELAY_SECONDS
+
+    respx.post(SEND_URL).mock(
+        side_effect=[httpx.Response(429, headers={"retry-after": "86400"}), _ok()]
+    )
+    sleep = _RecordingSleep()
+    outcome = _sender(sleep).send_with_retry("hi")
+    assert outcome.delivered is True
+    assert sleep.calls == [_MAX_DELAY_SECONDS]
+
+
+@respx.mock
+def test_429_negative_retry_after_is_floored_to_zero() -> None:
+    # A negative Retry-After would make time.sleep raise; it must floor to 0.
+    respx.post(SEND_URL).mock(
+        side_effect=[httpx.Response(429, headers={"retry-after": "-5"}), _ok()]
+    )
+    sleep = _RecordingSleep()
+    outcome = _sender(sleep).send_with_retry("hi")
+    assert outcome.delivered is True
+    assert sleep.calls == [0.0]
+
+
+@respx.mock
+def test_429_infinite_retry_after_falls_back_to_default() -> None:
+    # float("inf")/"nan" parse without ValueError but would crash time.sleep;
+    # they are normalized to the 1s default before the clamp ever sees them.
+    respx.post(SEND_URL).mock(
+        side_effect=[httpx.Response(429, headers={"retry-after": "inf"}), _ok()]
+    )
+    sleep = _RecordingSleep()
+    outcome = _sender(sleep).send_with_retry("hi")
+    assert outcome.delivered is True
+    assert sleep.calls == [1.0]
+
+
+@respx.mock
+def test_a_5xx_between_429s_resets_the_consecutive_run() -> None:
+    # The 429 cap counts *consecutive* 429s: a successful non-429 retry in
+    # between resets the counter, so alternating 429/5xx never trips the cap.
+    from tg_logging_handler.sender import _MAX_RATE_LIMIT_WAITS
+
+    pattern: list[httpx.Response] = []
+    for _ in range(_MAX_RATE_LIMIT_WAITS + 3):
+        pattern.append(httpx.Response(429, headers={"retry-after": "1"}))
+        pattern.append(httpx.Response(500))
+    pattern.append(_ok())
+    respx.post(SEND_URL).mock(side_effect=pattern)
+    sleep = _RecordingSleep()
+    # Enough retry budget to absorb every 5xx in the pattern.
+    outcome = _sender(sleep, max_retries=_MAX_RATE_LIMIT_WAITS + 3).send_with_retry("hi")
+    assert outcome.delivered is True  # never trips the 429 cap
