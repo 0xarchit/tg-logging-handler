@@ -18,6 +18,7 @@ from typing import Callable
 from . import _diagnostics
 from ._constants import TELEGRAM_MAX_MESSAGE_LENGTH
 from .batching import BatchAccumulator
+from .formatting import escape
 from .overflow import prepare_messages
 from .sender import TelegramSender
 from .stats import StatsCollector
@@ -42,6 +43,7 @@ class WorkerThread(threading.Thread):
         batch_size: int,
         flush_interval: float,
         overflow: str = "split",
+        parse_mode: str | None = None,
     ) -> None:
         super().__init__(name="tg-logging-handler-worker", daemon=True)
         self._queue = record_queue
@@ -51,6 +53,7 @@ class WorkerThread(threading.Thread):
         # batch_size==1 (default) makes the accumulator flush every record.
         self._accumulator = BatchAccumulator(batch_size=batch_size, flush_interval=flush_interval)
         self._overflow = overflow
+        self._parse_mode = parse_mode
 
     def run(self) -> None:
         try:
@@ -94,9 +97,15 @@ class WorkerThread(threading.Thread):
         otherwise they count as ``failed`` (conservative: a partially delivered
         split still flags the batch, ARCHITECTURE.md §4).
         """
-        lines = [self._format_record(r) for r in batch]
+        # Escape each record's text for the parse_mode before joining, so no
+        # stray char in a message/traceback breaks Telegram's parser (FR-18).
+        # Escaping per-record (not the joined blob) keeps the newline separators
+        # literal — they are the separators, not content to escape.
+        lines = [escape(self._format_record(r), self._parse_mode) for r in batch]
         text = "\n".join(lines)
-        messages = prepare_messages(text, self._overflow, TELEGRAM_MAX_MESSAGE_LENGTH)
+        messages = prepare_messages(
+            text, self._overflow, TELEGRAM_MAX_MESSAGE_LENGTH, parse_mode=self._parse_mode
+        )
         if not messages:
             # overflow="drop" on oversized text: nothing goes on the wire (FR-13).
             self._stats.increment("dropped", len(batch))

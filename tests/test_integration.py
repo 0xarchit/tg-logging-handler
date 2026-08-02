@@ -255,3 +255,49 @@ def test_queue_full_drop_newest_counts_and_keeps_oldest(
     stats = handler.stats
     assert stats.queued + stats.dropped == 5
     assert stats.dropped >= 1
+
+
+def test_markdownv2_wire_text_is_escaped_and_carries_parse_mode(
+    make_logger: LoggerFactory,
+    mock_api: respx.MockRouter,
+    fast_handler_factory: HandlerFactory,
+    wait_for: WaitFor,
+) -> None:
+    """M3 scenario: a MarkdownV2 handler escapes specials on the wire (FR-17/18).
+
+    A log line full of MarkdownV2 specials would 400 unescaped; the handler must
+    send the escaped form and set ``parse_mode`` so Telegram renders it safely.
+    """
+    logger = make_logger("scenario-md2")
+    handler = fast_handler_factory(parse_mode="MarkdownV2", batch_size=1)
+    logger.addHandler(handler)
+
+    logger.error("v1.2_final (build #3)!")
+    route = next(r for r in mock_api.routes if "sendMessage" in str(r.pattern))
+    assert wait_for(lambda: route.call_count == 1)
+    logger.handlers.clear()
+
+    body = _body(route)
+    assert body["parse_mode"] == "MarkdownV2"
+    assert body["text"] == "v1\\.2\\_final \\(build \\#3\\)\\!"
+
+
+def test_html_wire_text_is_escaped_and_carries_parse_mode(
+    make_logger: LoggerFactory,
+    mock_api: respx.MockRouter,
+    fast_handler_factory: HandlerFactory,
+    wait_for: WaitFor,
+) -> None:
+    """M3 scenario: an HTML handler entity-escapes ``& < >`` on the wire (FR-17/18)."""
+    logger = make_logger("scenario-html")
+    handler = fast_handler_factory(parse_mode="HTML", batch_size=1)
+    logger.addHandler(handler)
+
+    logger.error("<tag> & value")
+    route = next(r for r in mock_api.routes if "sendMessage" in str(r.pattern))
+    assert wait_for(lambda: route.call_count == 1)
+    logger.handlers.clear()
+
+    body = _body(route)
+    assert body["parse_mode"] == "HTML"
+    assert body["text"] == "&lt;tag&gt; &amp; value"
