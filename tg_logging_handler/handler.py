@@ -81,22 +81,27 @@ class TelegramLoggingHandler(logging.Handler):
         if validate:
             validate_token(resolved_token, api_base_url)
 
-        # ponytail: M0 honors batch_size(=1 behavior)/max_retries/overflow/queue_full_policy
-        # only as accepted+stored kwargs; batching→M1, retry→M1, overflow→M2, other
-        # queue policies→P3. Signature is the full documented contract so dictConfig
-        # configs and positional-safe kwargs stay stable across milestones.
+        # ponytail: overflow→M2, queue_full_policy other-than-drop_newest→P3 are
+        # still accepted-and-stored only. batch_size/flush_interval/max_retries are
+        # live from M1 (batching + retry/backoff/429). Full signature keeps
+        # dictConfig configs stable across milestones.
         self._shutdown_timeout = shutdown_timeout
         self._closed = False
         self._stats = StatsCollector()
         self._queue: queue.Queue[object] = queue.Queue(maxsize=queue_maxsize)
         self._sender = TelegramSender(
-            resolved_token, resolved_chat, api_base_url, parse_mode=parse_mode
+            resolved_token,
+            resolved_chat,
+            api_base_url,
+            parse_mode=parse_mode,
+            max_retries=max_retries,
         )
         self._worker = WorkerThread(
             record_queue=self._queue,
             sender=self._sender,
             stats=self._stats,
             format_record=self.format,
+            batch_size=batch_size,
             flush_interval=flush_interval,
         )
         self._worker.start()

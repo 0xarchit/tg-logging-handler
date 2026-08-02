@@ -1,22 +1,52 @@
 """HTTP sender — one ``httpx.Client`` per handler, lazily created on the worker thread.
 
-M0 scope: send-only, no retry/backoff/429 handling (those arrive in M1). The
-client is created lazily inside :meth:`TelegramSender.send` so it is bound to
-the worker thread that uses it, never the constructing thread
-(ARCHITECTURE.md §3.6).
+M1: adds retry with exponential backoff + jitter (FR-10), 429 ``Retry-After``
+handling that does not consume the retry budget (FR-11), and permanent-4xx
+fail-fast (ARCHITECTURE.md §4). The client is created lazily inside
+:meth:`TelegramSender.send` so it is bound to the worker thread that uses it,
+never the constructing thread (ARCHITECTURE.md §3.6). ``sleep`` is injectable
+so the backoff math is testable with a fake clock (TESTING.md §1/§3).
 """
 
 from __future__ import annotations
 
+import random
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+
 import httpx
 
 from ._constants import DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT
+from .exceptions import TelegramSendError
 
-__all__ = ["TelegramSender"]
+__all__ = ["SendOutcome", "TelegramSendError", "TelegramSender"]
+
+_BASE_DELAY_SECONDS = 0.5  # first retry waits ~0.5s, then ~1s, ~2s ... (capped)
+_MAX_DELAY_SECONDS = 30.0
+_JITTER_FRACTION = 0.25  # ±25% jitter around each backoff delay
+
+
+@dataclass(frozen=True)
+class SendOutcome:
+    """Result of one ``send_with_retry`` call — delivered or not, and retry count.
+
+    ``delivered=False`` means the message was dropped after retries were
+    exhausted (or failed permanently); the worker counts it as ``failed`` so
+    ``sent`` stays accurate (ARCHITECTURE.md §4, FR-12).
+    """
+
+    delivered: bool
+    retries: int
 
 
 class TelegramSender:
-    """Sends a single message to Telegram's ``sendMessage`` endpoint."""
+    """Sends messages to Telegram's ``sendMessage`` endpoint with retry/backoff.
+
+    A single ``httpx.Client`` is created lazily on first send and bound to the
+    worker thread (never the constructing thread). Retries happen here, inside
+    the worker, so the application thread is never blocked by network I/O.
+    """
 
     def __init__(
         self,
@@ -24,10 +54,14 @@ class TelegramSender:
         chat_id: str,
         api_base_url: str,
         parse_mode: str | None = None,
+        max_retries: int = 3,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._url = f"{api_base_url}/bot{token}/sendMessage"
         self._chat_id = chat_id
         self._parse_mode = parse_mode
+        self._max_retries = max_retries
+        self._sleep = sleep
         self._client: httpx.Client | None = None
 
     def _get_client(self) -> httpx.Client:
@@ -37,12 +71,43 @@ class TelegramSender:
             self._client = httpx.Client(timeout=timeout)
         return self._client
 
-    def send(self, text: str) -> None:
-        """POST one message. Raises ``httpx.HTTPError`` on network/HTTP failure.
+    def send_with_retry(self, text: str) -> SendOutcome:
+        """POST one message, retrying transient failures.
 
-        The caller (worker loop) is responsible for catching failures — this
-        method deliberately lets errors propagate so the worker can count and
-        report them.
+        Returns a :class:`SendOutcome`: ``delivered`` is ``True`` only if
+        Telegram accepted the message, and ``retries`` counts the transient
+        retries performed (0 on first-try success). Never raises — exhausted or
+        permanent failures return ``delivered=False`` so the worker counts them
+        as ``failed`` and reports to stderr (FR-10/11/12; ARCHITECTURE.md §4).
+        429s honor ``Retry-After`` without consuming the retry budget (FR-11);
+        permanent 4xx are not retried at all, since retrying a broken request
+        just wastes the budget (ARCHITECTURE.md §4).
+        """
+        attempts = 0
+        delay = _BASE_DELAY_SECONDS
+        while True:
+            try:
+                self._send_once(text)
+                return SendOutcome(delivered=True, retries=attempts)
+            except TelegramSendError as exc:
+                if exc.retry_after is not None:
+                    # 429 rate limit: honor Retry-After, does not consume retry
+                    # budget (FR-11).
+                    self._sleep(exc.retry_after)
+                    continue
+                if not exc.retryable or attempts >= self._max_retries:
+                    return SendOutcome(delivered=False, retries=attempts)
+                attempts += 1
+                jittered = delay * (1.0 + _JITTER_FRACTION * (2.0 * random.random() - 1.0))
+                self._sleep(max(jittered, 0.0))
+                delay = min(delay * 2.0, _MAX_DELAY_SECONDS)
+
+    def _send_once(self, text: str) -> None:
+        """POST one message; raise ``TelegramSendError`` on any failure.
+
+        Classifies the failure as retryable (network error, 5xx), a 429 (with
+        ``Retry-After``), or permanent (other 4xx). ``TelegramSendError`` is
+        internal-only and never propagates past ``send_with_retry``.
         """
         payload: dict[str, object] = {
             "chat_id": self._chat_id,
@@ -52,8 +117,25 @@ class TelegramSender:
         if self._parse_mode is not None:
             payload["parse_mode"] = self._parse_mode
 
-        response = self._get_client().post(self._url, json=payload)
-        response.raise_for_status()
+        try:
+            response = self._get_client().post(self._url, json=payload)
+        except httpx.HTTPError as exc:
+            raise TelegramSendError(str(exc), retryable=True) from exc
+
+        if response.status_code == 429:
+            retry_after = float(response.headers.get("retry-after", "1.0"))
+            raise TelegramSendError(
+                f"rate limited (429) for {retry_after}s", retryable=True, retry_after=retry_after
+            )
+        if 400 <= response.status_code < 500:
+            raise TelegramSendError(
+                f"permanent error {response.status_code}: {response.text}",
+                retryable=False,
+            )
+        if response.status_code >= 500:
+            raise TelegramSendError(
+                f"server error {response.status_code}: {response.text}", retryable=True
+            )
 
     def close(self) -> None:
         """Close the underlying client. Safe to call when never opened."""
