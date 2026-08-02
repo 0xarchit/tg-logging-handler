@@ -10,6 +10,7 @@ so the backoff math is testable with a fake clock (TESTING.md §1/§3).
 
 from __future__ import annotations
 
+import math
 import random
 import time
 from collections.abc import Callable
@@ -101,11 +102,15 @@ class TelegramSender:
                     if rate_limited >= _MAX_RATE_LIMIT_WAITS:
                         return SendOutcome(delivered=False, retries=attempts)
                     rate_limited += 1
-                    self._sleep(exc.retry_after)
+                    # Clamp the server's Retry-After to [0, _MAX_DELAY_SECONDS]
+                    # so one huge (or negative) header value can't stall the
+                    # worker for hours or crash time.sleep.
+                    self._sleep(min(max(exc.retry_after, 0.0), _MAX_DELAY_SECONDS))
                     continue
                 if not exc.retryable or attempts >= self._max_retries:
                     return SendOutcome(delivered=False, retries=attempts)
                 attempts += 1
+                rate_limited = 0  # a non-429 retry breaks the consecutive-429 run
                 jittered = delay * (1.0 + _JITTER_FRACTION * (2.0 * random.random() - 1.0))
                 self._sleep(max(jittered, 0.0))
                 delay = min(delay * 2.0, _MAX_DELAY_SECONDS)
@@ -136,6 +141,8 @@ class TelegramSender:
             except ValueError:
                 # Retry-After may be an HTTP-date (RFC 9110), not seconds. We
                 # don't parse dates — fall back to a conservative 1s default.
+                retry_after = 1.0
+            if math.isnan(retry_after) or retry_after == float("inf"):
                 retry_after = 1.0
             raise TelegramSendError(
                 f"rate limited (429) for {retry_after}s", retryable=True, retry_after=retry_after
