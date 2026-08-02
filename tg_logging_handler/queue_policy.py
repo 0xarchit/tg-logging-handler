@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import queue
 from dataclasses import dataclass
-from typing import Callable, TypeVar
+from typing import Callable
 
 __all__ = [
     "PutResult",
@@ -28,8 +28,6 @@ __all__ = [
     "put_drop_oldest",
     "select_put_policy",
 ]
-
-_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -47,10 +45,10 @@ class PutResult:
 
 
 # A put policy: enqueue ``item`` into ``q``, returning what happened.
-PutPolicy = Callable[["queue.Queue[_T]", _T], PutResult]
+PutPolicy = Callable[[queue.Queue[object], object], PutResult]
 
 
-def put_drop_newest(q: queue.Queue[_T], item: _T) -> PutResult:
+def put_drop_newest(q: queue.Queue[object], item: object) -> PutResult:
     """Enqueue ``item`` without blocking; drop it if the queue is full."""
     try:
         q.put_nowait(item)
@@ -59,7 +57,7 @@ def put_drop_newest(q: queue.Queue[_T], item: _T) -> PutResult:
     return PutResult(enqueued=True, dropped=0)
 
 
-def put_drop_oldest(q: queue.Queue[_T], item: _T) -> PutResult:
+def put_drop_oldest(q: queue.Queue[object], item: object) -> PutResult:
     """Enqueue ``item``, evicting the oldest queued record if the queue is full.
 
     The eviction + insert is best-effort under concurrency: another producer may
@@ -85,13 +83,13 @@ def put_drop_oldest(q: queue.Queue[_T], item: _T) -> PutResult:
     return PutResult(enqueued=False, dropped=dropped + 1)
 
 
-def put_block(q: queue.Queue[_T], item: _T) -> PutResult:
+def put_block(q: queue.Queue[object], item: object) -> PutResult:
     """Block until the queue has room, then enqueue ``item`` (never drops)."""
     q.put(item)
     return PutResult(enqueued=True, dropped=0)
 
 
-def select_put_policy(name: str) -> PutPolicy[object]:
+def select_put_policy(name: str) -> PutPolicy:
     """Return the put function for a ``queue_full_policy`` name.
 
     Raises:
@@ -109,7 +107,7 @@ def select_put_policy(name: str) -> PutPolicy[object]:
 _OLDEST_EVICT_ATTEMPTS = 3
 
 
-def _try_put(q: queue.Queue[_T], item: _T) -> bool:
+def _try_put(q: queue.Queue[object], item: object) -> bool:
     try:
         q.put_nowait(item)
     except queue.Full:
@@ -117,7 +115,7 @@ def _try_put(q: queue.Queue[_T], item: _T) -> bool:
     return True
 
 
-_POLICIES: dict[str, PutPolicy[object]] = {
+_POLICIES: dict[str, PutPolicy] = {
     "block": put_block,
     "drop_newest": put_drop_newest,
     "drop_oldest": put_drop_oldest,
