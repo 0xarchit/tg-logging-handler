@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from . import _diagnostics
 from ._constants import DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT
 from .exceptions import TelegramSendError
 
@@ -65,6 +66,10 @@ class TelegramSender:
         self._max_retries = max_retries
         self._sleep = sleep
         self._client: httpx.Client | None = None
+        # One-time heads-up when rate limiting first starts, so a 429 storm does
+        # not silently retry forever; re-sending it on every 429 would only add
+        # to the flood (see _notify_rate_limited).
+        self._notified_rate_limit = False
 
     def _get_client(self) -> httpx.Client:
         """Return the worker-thread-local client, creating it on first use."""
@@ -99,6 +104,13 @@ class TelegramSender:
                     # retry budget (FR-11), but cap consecutive waits so a
                     # stuck/malicious 429 can't spin the worker forever and
                     # block drain/shutdown.
+                    if not self._notified_rate_limit:
+                        # First 429 of this sender's life: fire a one-time notice
+                        # into the chat before the first backoff, so an operator
+                        # sees that rate limiting started even if the flood keeps
+                        # up and every later send is dropped.
+                        self._notified_rate_limit = True
+                        self._notify_rate_limited()
                     if rate_limited >= _MAX_RATE_LIMIT_WAITS:
                         return SendOutcome(delivered=False, retries=attempts)
                     rate_limited += 1
@@ -114,6 +126,25 @@ class TelegramSender:
                 jittered = delay * (1.0 + _JITTER_FRACTION * (2.0 * random.random() - 1.0))
                 self._sleep(max(jittered, 0.0))
                 delay = min(delay * 2.0, _MAX_DELAY_SECONDS)
+
+    def _notify_rate_limited(self) -> None:
+        """Best-effort, one-time heads-up that Telegram started rate limiting.
+
+        Posted directly — no retry, no 429 classification — so it can never
+        recurse into this notice path or block the worker on a backoff. Any
+        failure (likely, since we are being rate limited) is reported to stderr
+        and swallowed. The message body carries no token or chat context.
+        """
+        text = (
+            "tg-logging-handler: a 429 (Too Many Requests) just came back from "
+            "the Telegram API. Logs will keep retrying and may keep hitting the "
+            "rate limit — recommend checking this up manually."
+        )
+        payload = {"chat_id": self._chat_id, "text": text, "disable_web_page_preview": True}
+        try:
+            self._get_client().post(self._url, json=payload)
+        except httpx.HTTPError as exc:
+            _diagnostics.report(f"could not send 429 heads-up notification: {exc}")
 
     def _send_once(self, text: str) -> None:
         """POST one message; raise ``TelegramSendError`` on any failure.
