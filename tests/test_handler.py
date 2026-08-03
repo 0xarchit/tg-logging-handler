@@ -15,12 +15,12 @@ import pytest
 import respx
 from conftest import API_BASE, TEST_CHAT_ID, TEST_TOKEN
 
-import tg_logging_handler
 from tg_logging_handler import (
     HandlerStats,
     TelegramConfigError,
     TelegramLoggingHandler,
     TGLoggingHandler,
+    __all__,
 )
 
 HandlerFactory = Callable[..., TelegramLoggingHandler]
@@ -39,7 +39,7 @@ def test_public_api_surface() -> None:
         "HandlerStats",
         "TelegramConfigError",
     ):
-        assert name in tg_logging_handler.__all__
+        assert name in __all__
 
 
 # --- constructor / config (FR-2, FR-3) ---------------------------------------

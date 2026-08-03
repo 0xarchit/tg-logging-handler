@@ -92,7 +92,7 @@ Ship a `logging.Handler` subclass that a developer can add to their existing log
 ## 7. Non-Functional Requirements
 
 - NFR-1: Zero required third-party dependencies beyond an HTTP client (`httpx` or `requests` — pick one, document the choice, keep it a single pinned dependency).
-- NFR-2: Python 3.9+ support.
+- NFR-2: Python 3.10+ support.
 - NFR-3: `emit()` call overhead must be sub-millisecond under normal (non-full-queue) conditions.
 - NFR-4: 100% of network failure modes must be caught and never propagate as exceptions into application code.
 - NFR-5: Test suite must run fully offline (mocked HTTP layer) with no real Telegram credentials required.

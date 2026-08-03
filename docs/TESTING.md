@@ -51,7 +51,7 @@
 
 ## 4. CI Requirements
 
-- Matrix: Python 3.9, 3.10, 3.11, 3.12, 3.13 (drop versions as they go EOL; PRD's floor is 3.9 — confirm this is still reasonable at implementation time and adjust NFR-2 if not).
+- Matrix: Python 3.10, 3.11, 3.12, 3.13, 3.14 (drop versions as they go EOL; PRD's floor is 3.10 — 3.9 dropped in v0.1.1 to take the pytest ≥9.0.3 security fix, which requires 3.10+).
 - Steps: `ruff check`, `ruff format --check`, `mypy --strict tg_logging_handler`, `pytest --cov=tg_logging_handler --cov-report=term-missing --cov-fail-under=90`.
 - No network access in the CI test job (optionally enforce with a firewall/hosts-block in CI config as a belt-and-suspenders check that no test accidentally hits the real API).
 

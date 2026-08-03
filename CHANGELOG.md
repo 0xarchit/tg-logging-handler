@@ -5,7 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.1] - 2026-08-03
+
+### Changed
+
+- **Minimum Python is now 3.10** (was 3.9). Python 3.9 reached end-of-life in
+  October 2025, and the pytest security fix below requires 3.10+. CI, publish
+  smoke tests, and classifiers updated accordingly.
+- `__version__` now derives solely from installed package metadata
+  (`importlib.metadata`); the uninstalled-source fallback is the non-real
+  sentinel `0+unknown` instead of a hardcoded release string, so the version can
+  never drift out of sync with `pyproject.toml`.
+
+### Security
+
+- Bumped the dev/test toolchain floor to `pytest>=9.0.3`, picking up the fix for
+  the world-readable `/tmp/pytest-of-*` temp-dir advisory (local DoS / possible
+  privilege escalation on multi-user UNIX hosts). Test-only — never shipped to
+  users; the sole runtime dependency remains `httpx`.
+
+### Fixed
+
+- Removed the redundant `import tg_logging_handler` alongside
+  `from tg_logging_handler import …` in the test suite, clearing the CodeQL
+  `py/import-and-import-from` findings.
+
+## [0.1.0] - 2026-08-03
 
 ### Added
 

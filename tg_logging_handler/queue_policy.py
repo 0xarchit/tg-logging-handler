@@ -18,8 +18,8 @@ bare bool.
 from __future__ import annotations
 
 import queue
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 __all__ = [
     "PutResult",

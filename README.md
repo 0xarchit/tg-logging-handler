@@ -20,7 +20,7 @@ and `parse_mode` escaping are all handled for you.
 pip install tg-logging-handler
 ```
 
-Requires Python 3.9+. The only runtime dependency is [`httpx`](https://www.python-httpx.org/).
+Requires Python 3.10+. The only runtime dependency is [`httpx`](https://www.python-httpx.org/).
 
 ## Quickstart
 

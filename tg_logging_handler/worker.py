@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import queue
 import threading
+from collections.abc import Callable
 from logging import LogRecord
-from typing import Callable
 
 from . import _diagnostics
 from ._constants import TELEGRAM_MAX_MESSAGE_LENGTH

@@ -45,7 +45,7 @@ applies, mapped onto **publish targets** instead of servers:
 
 | Stage | What runs | Trigger |
 |---|---|---|
-| **Test** | `ci.yml` — ruff / mypy / pytest matrix (py3.9–3.14) + build check | every push + every PR |
+| **Test** | `ci.yml` — ruff / mypy / pytest matrix (py3.10–3.14) + build check | every push + every PR |
 | **Scan** | `codeql.yml` — CodeQL security-extended + security-and-quality | push/PR to `main` + weekly |
 | **Preview** | `publish-testpypi.yml` — publish to **TestPyPI** + install-back smoke test | **CI green** on `main` |
 | **Production** | `publish-pypi.yml` — publish to **PyPI** + install-back smoke test | a **GitHub Release** is published |
@@ -57,14 +57,14 @@ of racing it. PyPI publish fires on a Release, which you cut only from a green
 `main` (branch protection in §3 enforces CI before the release commit exists).
 
 Both publish workflows end with a **`smoke-test` job**: install the just-published
-package *from the index* into clean py3.9 and py3.13 venvs and assert the public
+package *from the index* into clean py3.10 and py3.13 venvs and assert the public
 API imports (`TelegramLoggingHandler`, `TGLoggingHandler`, `TelegramConfigError`,
 `__version__`). This is the cross-check that the built artifact is actually
 installable and importable from the real index — not just that it built locally.
 Install uses a 5× retry with backoff to absorb index propagation lag.
 
 So the full chain the pieces cross-test each other along is:
-**local gate (`uv run …`) → CI matrix (py3.9–3.14) → TestPyPI publish + install-back → Release → PyPI publish + install-back.**
+**local gate (`uv run …`) → CI matrix (py3.10–3.14) → TestPyPI publish + install-back → Release → PyPI publish + install-back.**
 
 ---
 
@@ -114,7 +114,7 @@ Go to **Settings → Environments** and create two:
 Runs on every push and PR. Installs from `uv.lock` (`uv sync --frozen`) so CI
 uses the exact pinned dev toolchain, then runs the same gate you run locally.
 
-- **Matrix**: Python `3.9`–`3.14`, `fail-fast: false` so one version's failure
+- **Matrix**: Python `3.10`–`3.14`, `fail-fast: false` so one version's failure
   doesn't hide the others. `uv sync --frozen --python <ver>` pins each leg.
 - **Gate** (mirrors local): `ruff check .` → `ruff format --check .` →
   `mypy` (config-driven, `--strict`, targets `tg_logging_handler` + `tests`) →
@@ -181,7 +181,7 @@ off a red build. It checks out the exact commit CI validated
 `pypa/gh-action-pypi-publish@release/v1` with `skip-existing: true` — `main` can
 be pushed without a version bump, so re-uploading the same version must not fail
 the run. A dependent **`smoke-test`** job then installs the package back from
-TestPyPI (py3.9 + py3.13, 5× retry for propagation lag) and asserts the public
+TestPyPI (py3.10 + py3.13, 5× retry for propagation lag) and asserts the public
 API imports.
 
 > `workflow_run` triggers only fire for workflow files on the repo's **default
@@ -196,7 +196,7 @@ protection in §3 requires CI to pass before the release commit exists), so CI
 gates this path too. Because it targets a protected environment, publishing a
 Release does **not** upload immediately — it opens a pending deployment you must
 approve in the Actions tab. After the upload, a dependent **`smoke-test`** job
-installs the package back from **real PyPI** (py3.9 + py3.13) and asserts the
+installs the package back from **real PyPI** (py3.10 + py3.13) and asserts the
 public API imports. That approval is the last checkpoint
 before something becomes public and effectively permanent.
 

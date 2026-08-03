@@ -20,12 +20,13 @@ from typing import Any
 
 import pytest
 
-import tg_logging_handler
 from tg_logging_handler import (
     HandlerStats,
     TelegramConfigError,
     TelegramLoggingHandler,
     TGLoggingHandler,
+    __all__,
+    __version__,
 )
 
 # A well-formed token that never leaves the process: offline tests either fail
@@ -47,7 +48,7 @@ requires_live = pytest.mark.skipif(
 
 def test_public_exports_and_version_are_importable() -> None:
     # Everything __all__ promises is importable, and the alias is the same class.
-    assert set(tg_logging_handler.__all__) == {
+    assert set(__all__) == {
         "HandlerStats",
         "TGLoggingHandler",
         "TelegramConfigError",
@@ -57,7 +58,7 @@ def test_public_exports_and_version_are_importable() -> None:
     assert TGLoggingHandler is TelegramLoggingHandler
     assert issubclass(TelegramLoggingHandler, logging.Handler)
     assert issubclass(TelegramConfigError, Exception)
-    assert isinstance(tg_logging_handler.__version__, str)
+    assert isinstance(__version__, str)
 
 
 def test_missing_token_raises_config_error(monkeypatch: pytest.MonkeyPatch) -> None:

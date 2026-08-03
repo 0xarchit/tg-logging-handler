@@ -12,9 +12,11 @@ from .stats import HandlerStats
 TGLoggingHandler = TelegramLoggingHandler
 
 try:
+    # Single source of truth: the version declared in pyproject.toml, read from
+    # installed metadata. Never hardcode it here — that only drifts.
     __version__ = version("tg-logging-handler")
 except PackageNotFoundError:  # pragma: no cover - only when imported uninstalled
-    __version__ = "0.1.0.dev0"
+    __version__ = "0+unknown"
 
 __all__ = [
     "HandlerStats",

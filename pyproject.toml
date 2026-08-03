@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tg-logging-handler"
-version = "0.1.0.dev0"
+version = "0.1.1"
 description = "Production-grade Telegram destination for Python's standard logging module"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Archit", email = "0xarchit@gmail.com" }]
 keywords = ["logging", "telegram", "telegram-bot", "handler"]
@@ -17,7 +17,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -38,7 +37,7 @@ Changelog = "https://github.com/0xarchit/tg-logging-handler/blob/main/CHANGELOG.
 [dependency-groups]
 dev = [
     "mypy>=1.11",
-    "pytest>=8",
+    "pytest>=9.0.3",
     "pytest-cov>=5",
     "respx>=0.21",
     "ruff>=0.6",
