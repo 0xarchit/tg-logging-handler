@@ -1,0 +1,66 @@
+name: Publish to TestPyPI
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types: [completed]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: testpypi
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  smoke-test:
+    needs: publish
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.13"]
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install from TestPyPI
+        run: |
+          uv venv --python ${{ matrix.python-version }}
+          for i in 1 2 3 4 5; do
+            uv pip install \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple/ \
+              tg-logging-handler && break
+            echo "Attempt $i failed, retrying in 30s..."
+            sleep 30
+          done
+
+      - name: Smoke test
+        run: >-
+          .venv/bin/python -c "
+          import tg_logging_handler as m;
+          assert hasattr(m, 'TelegramLoggingHandler');
+          assert hasattr(m, 'TGLoggingHandler');
+          assert hasattr(m, 'TelegramConfigError');
+          assert hasattr(m, '__version__');
+          print('OK:', m.__version__)
+          "

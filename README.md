@@ -1,5 +1,12 @@
 # tg-logging-handler
 
+[![CI](https://github.com/0xarchit/tg-logging-handler/actions/workflows/ci.yml/badge.svg)](https://github.com/0xarchit/tg-logging-handler/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/0xarchit/tg-logging-handler/actions/workflows/codeql.yml/badge.svg)](https://github.com/0xarchit/tg-logging-handler/actions/workflows/codeql.yml)
+[![codecov](https://codecov.io/gh/0xarchit/tg-logging-handler/branch/main/graph/badge.svg)](https://codecov.io/gh/0xarchit/tg-logging-handler)
+[![PyPI](https://img.shields.io/pypi/v/tg-logging-handler.svg)](https://pypi.org/project/tg-logging-handler/)
+[![Python versions](https://img.shields.io/pypi/pyversions/tg-logging-handler.svg)](https://pypi.org/project/tg-logging-handler/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Production-grade Telegram destination for Python's standard `logging` module.
 
 Attach one handler and your logs go to a Telegram chat — asynchronously, so a

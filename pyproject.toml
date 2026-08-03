@@ -22,11 +22,18 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: System :: Logging",
 ]
 dependencies = [
     "httpx>=0.27,<1.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/0xarchit/tg-logging-handler"
+Repository = "https://github.com/0xarchit/tg-logging-handler"
+Issues = "https://github.com/0xarchit/tg-logging-handler/issues"
+Changelog = "https://github.com/0xarchit/tg-logging-handler/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [

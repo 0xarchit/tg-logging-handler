@@ -1,6 +1,13 @@
 # GitHub Setup — `tg-logging-handler`
 
-End-to-end guide for repo structure, branch strategy, GitHub Environments, CI/CD pipelines, and PyPI publishing. Written so a first-time package author (or a coding agent) can follow it step by step with no gaps.
+End-to-end guide for repo structure, branch strategy, GitHub Environments, CI/CD
+pipelines, code scanning, and PyPI publishing. Written so a first-time package
+author (or a coding agent) can follow it step by step with no gaps.
+
+This document matches the workflow files actually committed under `.github/`.
+Toolchain: **uv** (lockfile-driven), **ruff** + **mypy --strict** + **pytest**,
+**PyPI Trusted Publishing** (OIDC — no stored tokens), and **CodeQL** advanced
+code scanning.
 
 ---
 
@@ -10,18 +17,18 @@ End-to-end guide for repo structure, branch strategy, GitHub Environments, CI/CD
 tg-logging-handler/
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml              # lint + typecheck + test, every push/PR
-│   │   ├── publish-testpypi.yml # publish to TestPyPI on every push to main
-│   │   └── publish-pypi.yml     # publish to real PyPI on version tag
-│   ├── ISSUE_TEMPLATE/
-│   │   ├── bug_report.md
-│   │   └── feature_request.md
+│   │   ├── ci.yml                # lint + typecheck + test matrix + build, every push/PR
+│   │   ├── codeql.yml            # CodeQL security scan (push/PR + weekly)
+│   │   ├── publish-testpypi.yml  # publish to TestPyPI on every push to main
+│   │   └── publish-pypi.yml      # publish to real PyPI on a published GitHub Release
 │   ├── PULL_REQUEST_TEMPLATE.md
-│   └── dependabot.yml
-├── tg_logging_handler/                # see ARCHITECTURE.md
+│   └── dependabot.yml            # pip + github-actions, weekly
+├── tg_logging_handler/           # see docs/ARCHITECTURE.md
 ├── tests/
-├── docs/                          # PRD.md, ARCHITECTURE.md, API_SPEC.md, CODING_STANDARDS.md, TESTING.md, ROADMAP.md
+├── docs/                         # PRD, ARCHITECTURE, API_SPEC, CODING_STANDARDS, TESTING, ROADMAP
 ├── .pre-commit-config.yaml
+├── .python-version               # 3.13 (local/dev interpreter for uv)
+├── uv.lock                       # pinned dev+runtime deps — CI installs from this
 ├── pyproject.toml
 ├── README.md
 ├── CHANGELOG.md
@@ -31,17 +38,33 @@ tg-logging-handler/
 
 ---
 
-## 2. Environments — What They Mean For a Library
+## 2. CI/CD At a Glance
 
-A library has no deployed "prod server," but the same three-stage discipline still applies, mapped onto **publish targets** instead of servers:
+A library has no deployed "prod server," but the three-stage discipline still
+applies, mapped onto **publish targets** instead of servers:
 
-| Stage | Equivalent here | Trigger |
+| Stage | What runs | Trigger |
 |---|---|---|
-| **Testing** | CI test matrix (ruff/mypy/pytest) | every push + every PR, all branches |
-| **Preview/Staging** | **TestPyPI** — a real but separate index for dry-run installs | every push to `main` |
-| **Production** | **PyPI** (the real, public index) | pushing a `v*.*.*` git tag, gated by a protected GitHub Environment |
+| **Test** | `ci.yml` — ruff / mypy / pytest matrix (py3.9–3.14) + build check | every push + every PR |
+| **Scan** | `codeql.yml` — CodeQL security-extended + security-and-quality | push/PR to `main` + weekly |
+| **Preview** | `publish-testpypi.yml` — publish to **TestPyPI** + install-back smoke test | **CI green** on `main` |
+| **Production** | `publish-pypi.yml` — publish to **PyPI** + install-back smoke test | a **GitHub Release** is published |
 
-This gives you a genuine dry run — install from TestPyPI into a clean venv and verify the package actually works — before anything goes to the real index where you can't easily un-publish.
+**The publish stages are gated on tests, not run beside them.** TestPyPI publish
+fires from `workflow_run` — it only starts *after* `ci.yml` reports `success` on
+`main`, so a red matrix (or a missing `CODECOV_TOKEN`) blocks the publish instead
+of racing it. PyPI publish fires on a Release, which you cut only from a green
+`main` (branch protection in §3 enforces CI before the release commit exists).
+
+Both publish workflows end with a **`smoke-test` job**: install the just-published
+package *from the index* into clean py3.9 and py3.13 venvs and assert the public
+API imports (`TelegramLoggingHandler`, `TGLoggingHandler`, `TelegramConfigError`,
+`__version__`). This is the cross-check that the built artifact is actually
+installable and importable from the real index — not just that it built locally.
+Install uses a 5× retry with backoff to absorb index propagation lag.
+
+So the full chain the pieces cross-test each other along is:
+**local gate (`uv run …`) → CI matrix (py3.9–3.14) → TestPyPI publish + install-back → Release → PyPI publish + install-back.**
 
 ---
 
@@ -51,11 +74,13 @@ Keep it simple for a solo/small project:
 
 - `main` — always green (CI passing), always installable from TestPyPI.
 - Feature branches: `feat/batching`, `fix/retry-backoff`, etc. — PR into `main`.
-- Tags: `v0.1.0`, `v0.1.1`, `v1.0.0` — these are what trigger real PyPI publishes. Tag only from `main`, only after CI is green on the commit being tagged.
+- Releases: cut a **GitHub Release** (with a `v0.1.0` tag) — this is what triggers
+  the real PyPI publish. Release only from `main`, only after CI is green on the
+  commit being released.
 
 **Branch protection on `main`** (Settings → Branches → Add rule):
 - Require a pull request before merging (even solo — keeps history clean and forces CI to run).
-- Require status checks to pass before merging → select the `ci.yml` job(s).
+- Require status checks to pass before merging → select the `ci.yml` matrix jobs and the CodeQL job.
 - Require branches to be up to date before merging.
 - Do not allow force-pushes to `main`.
 
@@ -63,274 +88,196 @@ Keep it simple for a solo/small project:
 
 ## 4. GitHub Environments Setup
 
-Environments give you approval gates and environment-scoped secrets — this is what makes the "production" publish deliberate instead of accidental.
+Environments give you approval gates and environment-scoped protection — this is
+what makes the "production" publish deliberate instead of accidental. With
+Trusted Publishing there are **no secrets to store**; the environment name is
+part of what PyPI trusts, so it must match the workflow exactly.
 
 Go to **Settings → Environments** and create two:
 
 ### `testpypi`
 - No protection rules needed (low stakes, easy to re-publish under a new dev version).
-- Add environment secret: none needed if using Trusted Publishing (recommended, see §6) — otherwise `TEST_PYPI_API_TOKEN`.
+- No secrets — OIDC handles auth (see §6).
 
 ### `pypi`
-- **Required reviewers**: add yourself. This means every real publish requires a manual "Approve" click in the Actions UI — your safety net against a mistaken tag push publishing garbage to the real index.
-- **Deployment branches**: restrict to tags matching `v*` only (Settings → Environments → `pypi` → Deployment branches and tags → "Selected branches and tags" → add tag rule `v*`).
-- Add environment secret: none needed if using Trusted Publishing — otherwise `PYPI_API_TOKEN`.
+- **Required reviewers**: add yourself. Every real publish then needs a manual
+  "Approve" click in the Actions UI — your safety net against a mistaken release
+  publishing garbage to the real index.
+- **Deployment branches and tags**: restrict to tags matching `v*` only, so only
+  a real version tag can deploy this environment.
+- No secrets — OIDC handles auth (see §6).
 
 ---
 
 ## 5. CI Workflow — `.github/workflows/ci.yml`
 
-Runs on every push and PR. This is the "testing environment."
+Runs on every push and PR. Installs from `uv.lock` (`uv sync --frozen`) so CI
+uses the exact pinned dev toolchain, then runs the same gate you run locally.
 
-```yaml
-name: CI
+- **Matrix**: Python `3.9`–`3.14`, `fail-fast: false` so one version's failure
+  doesn't hide the others. `uv sync --frozen --python <ver>` pins each leg.
+- **Gate** (mirrors local): `ruff check .` → `ruff format --check .` →
+  `mypy` (config-driven, `--strict`, targets `tg_logging_handler` + `tests`) →
+  `pytest --cov` (the `fail_under = 90` gate in `pyproject.toml` is authoritative).
+- **Coverage upload**: Codecov, once (on the 3.13 leg — matches `.python-version`),
+  with `fail_ci_if_error: true` so a broken upload surfaces instead of silently
+  passing. Requires the `CODECOV_TOKEN` repo secret (§10); the badge is in the
+  README.
+- **`build` job** (after `test`): `uv build`, `uvx twine check dist/*`, and a
+  grep that fails if `tg_logging_handler/py.typed` is missing from the wheel.
+  Catches packaging mistakes (broken metadata, dropped `py.typed`) on every PR,
+  long before a publish attempt.
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
-
-      - name: Install package + dev deps
-        run: pip install -e ".[dev]"
-
-      - name: Lint (ruff check)
-        run: ruff check .
-
-      - name: Format check (ruff format)
-        run: ruff format --check .
-
-      - name: Type check (mypy --strict)
-        run: mypy --strict tg_logging_handler
-
-      - name: Test with coverage
-        run: pytest --cov=tg_logging_handler --cov-report=term-missing --cov-report=xml --cov-fail-under=90
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        with:
-          files: coverage.xml
-        continue-on-error: true   # don't fail CI just because Codecov upload had a hiccup
-
-  build-check:
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Build sdist + wheel
-        run: |
-          pip install build
-          python -m build
-      - name: Check package metadata
-        run: |
-          pip install twine
-          twine check dist/*
-      - name: Verify py.typed is included
-        run: |
-          python -m zipfile -l dist/*.whl | grep py.typed
-```
-
-`build-check` catches packaging mistakes (missing `py.typed`, broken `pyproject.toml` metadata) on every PR — long before a tag/publish attempt.
+> Why `uv run mypy` with no args: `pyproject.toml` already sets
+> `files = ["tg_logging_handler", "tests"]` and `strict = true`, so passing paths
+> on the CLI would only risk drifting from the committed config.
 
 ---
 
-## 6. PyPI Publishing — Trusted Publishing (recommended, no stored secrets)
+## 6. Security Scanning — `.github/workflows/codeql.yml`
 
-Use **PyPI Trusted Publishing** (OIDC) instead of long-lived API tokens. No secret ever lives in GitHub; PyPI trusts GitHub Actions directly per-repo/per-workflow.
+**Advanced CodeQL setup** (a committed workflow, not GitHub's "default" toggle),
+so the query suites and triggers live in-repo and are reviewable:
 
-### One-time setup on PyPI/TestPyPI
-1. Create an account and, separately, register the project name on both:
-   - https://test.pypi.org — for the `testpypi` environment.
-   - https://pypi.org — for the `pypi` environment (do this once you're confident in the final package name — see PRD.md open question on naming).
-2. On each site: **Account → Publishing → Add a new pending publisher**:
-   - PyPI Project Name: `tg-logging-handler` (or final confirmed name)
-   - Owner: your GitHub username/org
-   - Repository name: `tg-logging-handler`
-   - Workflow name: `publish-pypi.yml` (or `publish-testpypi.yml` on the TestPyPI side)
-   - Environment name: `pypi` (or `testpypi`)
-3. No API token needed — the workflow below authenticates via OIDC automatically.
+- **Language**: `python`, `build-mode: none` (pure Python — nothing to compile).
+- **Queries**: `security-extended,security-and-quality` — the broadest first-party
+  suites, more than the default `security` set.
+- **Triggers**: push + PR to `main`, plus a weekly `schedule` so newly published
+  CodeQL rules catch latent issues even when the code is quiet.
+- **Permissions**: `security-events: write` is required to upload results to the
+  repo's **Security → Code scanning** tab.
 
-### `.github/workflows/publish-testpypi.yml`
-```yaml
-name: Publish to TestPyPI
-
-on:
-  push:
-    branches: [main]
-
-permissions:
-  id-token: write   # required for OIDC trusted publishing
-
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    environment: testpypi
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install build
-      - run: python -m build
-      - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          skip-existing: true   # main can be pushed multiple times without a version bump; don't fail the run
-```
-
-### `.github/workflows/publish-pypi.yml`
-```yaml
-name: Publish to PyPI
-
-on:
-  push:
-    tags:
-      - "v*.*.*"
-
-permissions:
-  id-token: write
-
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    environment: pypi   # this is what triggers the required-reviewer approval gate
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install build twine
-      - run: python -m build
-      - run: twine check dist/*
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-```
-
-Because this workflow targets the `pypi` environment (with required reviewers, tag-restricted deployment branches), pushing a `v*` tag does **not** immediately publish — it opens a pending deployment that you must manually approve in the Actions tab. This is your last checkpoint before something becomes public and effectively permanent.
+One-time: **Settings → Code security → Code scanning** — if "Default" was ever
+enabled, switch it off so it doesn't run alongside this advanced workflow.
 
 ---
 
-## 7. Version Bump + Release Process
+## 7. PyPI Publishing — Trusted Publishing (OIDC, no stored secrets)
 
-Manual checklist (v1 has no version automation — keep it simple until there's a reason not to):
+Both publish workflows authenticate with **PyPI Trusted Publishing** (OIDC) via
+`permissions: id-token: write` — no API token ever lives in GitHub.
 
-1. On `main`, confirm CI is green and TestPyPI publish succeeded on the latest commit.
-2. `pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ tg-logging-handler` in a fresh venv, run the README quickstart manually against a throwaway bot (TESTING.md §5 pre-release checklist).
-3. Bump `version` in `pyproject.toml`.
+### One-time setup on PyPI / TestPyPI
+Register a **pending publisher** on each index that must match the workflow
+exactly. On each site: **Account → Publishing → Add a new pending publisher**:
+
+| Field | TestPyPI (test.pypi.org) | PyPI (pypi.org) |
+|---|---|---|
+| PyPI Project Name | `tg-logging-handler` | `tg-logging-handler` |
+| Owner | `0xarchit` | `0xarchit` |
+| Repository name | `tg-logging-handler` | `tg-logging-handler` |
+| Workflow name | `publish-testpypi.yml` | `publish-pypi.yml` |
+| Environment name | `testpypi` | `pypi` |
+
+Do the TestPyPI one first (low stakes) and confirm a dev build lands, then do
+PyPI once the name is final. No token needed — the workflows authenticate via
+OIDC automatically.
+
+### `publish-testpypi.yml` (gated on CI success on `main`)
+Triggered by `workflow_run` on the **CI** workflow — the `publish` job runs only
+when `github.event.workflow_run.conclusion == 'success'`, so nothing publishes
+off a red build. It checks out the exact commit CI validated
+(`workflow_run.head_sha`), builds with `uv build`, and publishes to TestPyPI via
+`pypa/gh-action-pypi-publish@release/v1` with `skip-existing: true` — `main` can
+be pushed without a version bump, so re-uploading the same version must not fail
+the run. A dependent **`smoke-test`** job then installs the package back from
+TestPyPI (py3.9 + py3.13, 5× retry for propagation lag) and asserts the public
+API imports.
+
+> `workflow_run` triggers only fire for workflow files on the repo's **default
+> branch** — this works once `main` has these files, which it will after the
+> first push. On a brand-new repo the very first CI run won't have a publish
+> workflow to trigger yet; it kicks in from the second push onward.
+
+### `publish-pypi.yml` (on published GitHub Release)
+Runs against the `pypi` environment (required-reviewer gate), builds, runs
+`twine check`, then publishes. A Release is cut only from a green `main` (branch
+protection in §3 requires CI to pass before the release commit exists), so CI
+gates this path too. Because it targets a protected environment, publishing a
+Release does **not** upload immediately — it opens a pending deployment you must
+approve in the Actions tab. After the upload, a dependent **`smoke-test`** job
+installs the package back from **real PyPI** (py3.9 + py3.13) and asserts the
+public API imports. That approval is the last checkpoint
+before something becomes public and effectively permanent.
+
+---
+
+## 8. Release Process
+
+`version` is set manually in `pyproject.toml` (no version automation in v1 —
+keep it simple until there's a reason not to). To cut a release:
+
+1. On `main`, confirm CI + CodeQL are green and the TestPyPI publish succeeded on
+   the latest commit.
+2. In a fresh venv, dry-run the install from TestPyPI and run the README
+   quickstart against a throwaway bot (see `docs/TESTING.md`):
+   ```
+   pip install --index-url https://test.pypi.org/simple/ \
+       --extra-index-url https://pypi.org/simple/ tg-logging-handler
+   ```
+3. Bump `version` in `pyproject.toml` (drop the `.dev0` suffix for a real release,
+   e.g. `0.1.0`).
 4. Add a `CHANGELOG.md` entry under a new version heading (Keep a Changelog format).
-5. Commit: `chore: release v0.1.0`.
-6. Tag: `git tag v0.1.0 && git push origin v0.1.0`.
-7. Go to the Actions tab → approve the pending `pypi` environment deployment.
-8. Verify on https://pypi.org/project/tg-logging-handler/ that the new version is live.
-9. Create a GitHub Release from the tag (Releases → Draft a new release → select tag → paste CHANGELOG entry as notes).
+5. Commit + push (PR into `main`): `chore: release v0.1.0`.
+6. **Draft a new GitHub Release** (Releases → Draft a new release), create the tag
+   `v0.1.0` on the release commit, paste the CHANGELOG entry as notes, and
+   **Publish** it. Publishing the Release triggers `publish-pypi.yml`.
+7. Actions tab → **approve** the pending `pypi` environment deployment.
+8. Verify at https://pypi.org/project/tg-logging-handler/ that the version is live.
 
 ---
 
-## 8. Supporting Files
+## 9. Supporting Files (as committed)
 
-### `.gitignore` (Python-specific essentials)
+### `.pre-commit-config.yaml`
+ruff (`--fix`), ruff-format, and mypy (`httpx` + `pytest` as typed deps, scoped to
+`tg_logging_handler/` and `tests/`). Install once locally:
 ```
-__pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-build/
-.venv/
-.mypy_cache/
-.ruff_cache/
-.pytest_cache/
-.coverage
-coverage.xml
+uv run pre-commit install
 ```
 
 ### `.github/dependabot.yml`
-```yaml
-version: 2
-updates:
-  - package-ecosystem: "pip"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-```
-
-### `.pre-commit-config.yaml`
-```yaml
-repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
-    hooks:
-      - id: ruff
-        args: [--fix]
-      - id: ruff-format
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.11.2
-    hooks:
-      - id: mypy
-        additional_dependencies: [httpx]
-        args: [--strict]
-        files: ^tg_logging_handler/
-```
-Install once locally: `pre-commit install`.
+Weekly updates for two ecosystems, each grouped into a single PR:
+- `pip` — runtime + dev deps from `pyproject.toml`.
+- `github-actions` — the action versions pinned in these workflows.
 
 ### `.github/PULL_REQUEST_TEMPLATE.md`
-```markdown
-## What
-<!-- What does this change? -->
+What / Why / Checklist, where the checklist is the local gate:
+`uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`,
+`uv run pytest --cov=tg_logging_handler`, and a CHANGELOG reminder.
 
-## Why
-<!-- Link to PRD.md FR-id / ROADMAP.md milestone if applicable -->
-
-## Checklist
-- [ ] `ruff check .` / `ruff format --check .` pass locally
-- [ ] `mypy --strict tg_logging_handler` passes locally
-- [ ] `pytest --cov=tg_logging_handler --cov-fail-under=90` passes locally
-- [ ] CHANGELOG.md updated (if user-facing change)
-```
+### `pyproject.toml` → `[project.urls]`
+Homepage / Repository / Issues / Changelog all point at
+`github.com/0xarchit/tg-logging-handler` — these render as links on the PyPI page.
 
 ---
 
-## 9. Repo-Level Settings Checklist (one-time, via GitHub UI)
+## 10. Repo-Level Settings Checklist (one-time, via GitHub UI)
 
-- [ ] Settings → General → Features: enable Issues, disable Wiki/Projects unless you want them.
-- [ ] Settings → General → Pull Requests: enable "Automatically delete head branches" (keeps branch list clean).
-- [ ] Settings → Branches: protection rule on `main` per §3.
+- [ ] Settings → General → Pull Requests: enable "Automatically delete head branches".
+- [ ] Settings → Branches: protection rule on `main` per §3 (include CI + CodeQL checks).
 - [ ] Settings → Environments: `testpypi` and `pypi` per §4.
-- [ ] Settings → Secrets and variables: **none required** if using Trusted Publishing (§6) — this is the point, don't add API tokens unless you deliberately choose the token-based fallback instead.
-- [ ] Settings → Tags: none required to protect explicitly since the `pypi` environment already restricts deployment to `v*` tags, but you may optionally add a tag protection rule (Settings → Tags → New rule → `v*`) restricting who can push release tags, useful once collaborators join.
-- [ ] Add a `LICENSE` file (MIT recommended for a small utility library — permissive, expected by users of this kind of package).
-- [ ] Repo description + topics (`python`, `logging`, `telegram`, `telegram-bot`) filled in — this is what makes it discoverable and is a small but real part of "does this read as a maintained, real package" for anyone (including future employers) checking it out.
+- [ ] Settings → Code security → Code scanning: ensure **Default** CodeQL is **off**
+      (the advanced `codeql.yml` replaces it); Dependabot alerts on.
+- [ ] Settings → Secrets and variables: **none required** — Trusted Publishing (§7)
+      is the whole point; don't add API tokens unless you deliberately switch to the
+      token-based fallback.
+- [ ] Register pending publishers on TestPyPI and PyPI per §7.
+- [ ] Repo description + topics (`python`, `logging`, `telegram`, `telegram-bot`) filled in.
 
 ---
 
-## 10. Order of Operations (do this once, in sequence)
+## 11. Order of Operations (first-time bring-up)
 
-1. Create the GitHub repo, push initial scaffold (empty `tg_logging_handler/` package + `pyproject.toml` + this `docs/` folder).
-2. Set up branch protection (§3) and both Environments (§4) before writing any real code — this way CI is enforced from commit #1, not bolted on later.
-3. Add `ci.yml` (§5), confirm it goes green on a trivial first PR.
-4. Implement M0 (per ROADMAP.md) behind PRs into `main`.
-5. Register the project name on TestPyPI, add `publish-testpypi.yml`, confirm the pending-publisher OIDC link works and a dev build lands on TestPyPI.
-6. Continue M1–M3 with TestPyPI publishing on every merge to `main` as your continuous "does this actually install and import" signal.
-7. Once M3 exit criteria are met (ROADMAP.md), register the name on real PyPI, add `publish-pypi.yml`, tag `v0.1.0`, approve the deployment, done.
+1. Push the scaffold (package + `pyproject.toml` + `uv.lock` + this `docs/` folder + `.github/`).
+2. Set up branch protection (§3) and both Environments (§4) before real code lands,
+   so CI is enforced from commit #1.
+3. Confirm `ci.yml` and `codeql.yml` go green on a trivial first PR.
+4. Register the TestPyPI pending publisher (§7), push to `main`, confirm a dev build
+   lands on TestPyPI.
+5. Develop behind PRs into `main`, using TestPyPI publishing on every merge as your
+   continuous "does this actually install and import" signal.
+6. When ready to ship: register the PyPI pending publisher, bump the version, publish a
+   GitHub Release, approve the `pypi` deployment (§8), done.
+
+
