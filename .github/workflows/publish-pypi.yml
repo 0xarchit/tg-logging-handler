@@ -12,11 +12,20 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     environment: pypi
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
+
+      - name: Read version from pyproject
+        id: version
+        run: |
+          v=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/.*"(.*)".*/\1/')
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Publishing $v"
 
       - name: Build sdist + wheel
         run: uv build
@@ -33,26 +42,39 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.10", "3.13"]
+    env:
+      VERSION: ${{ needs.publish.outputs.version }}
     steps:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Install from PyPI
+      - name: Install the just-published version from PyPI
         run: |
           uv venv --python ${{ matrix.python-version }}
+          # Pin ==$VERSION so a not-yet-propagated release fails the install and
+          # triggers a retry, instead of silently grabbing a stale older version.
           for i in 1 2 3 4 5; do
-            uv pip install tg-logging-handler && break
-            echo "Attempt $i failed, retrying in 30s..."
+            uv pip install "tg-logging-handler==$VERSION" && break
+            if [ "$i" = 5 ]; then
+              echo "::error::$VERSION never became installable after 5 attempts"
+              exit 1
+            fi
+            echo "Attempt $i: $VERSION not on the index yet, retrying in 30s..."
             sleep 30
           done
 
       - name: Smoke test
+        env:
+          EXPECTED_VERSION: ${{ needs.publish.outputs.version }}
         run: |
           .venv/bin/python - <<'PYEOF'
+          import os
           import tg_logging_handler as m
           assert hasattr(m, "TelegramLoggingHandler")
           assert hasattr(m, "TGLoggingHandler")
           assert hasattr(m, "TelegramConfigError")
           assert hasattr(m, "__version__")
+          expected = os.environ["EXPECTED_VERSION"]
+          assert m.__version__ == expected, f"installed {m.__version__}, expected {expected}"
           print("OK:", m.__version__)
           PYEOF
