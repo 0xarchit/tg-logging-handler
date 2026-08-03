@@ -47,12 +47,12 @@ jobs:
           done
 
       - name: Smoke test
-        run: >-
-          .venv/bin/python -c "
-          import tg_logging_handler as m;
-          assert hasattr(m, 'TelegramLoggingHandler');
-          assert hasattr(m, 'TGLoggingHandler');
-          assert hasattr(m, 'TelegramConfigError');
-          assert hasattr(m, '__version__');
-          print('OK:', m.__version__)
-          "
+        run: |
+          .venv/bin/python - <<'PYEOF'
+          import tg_logging_handler as m
+          assert hasattr(m, "TelegramLoggingHandler")
+          assert hasattr(m, "TGLoggingHandler")
+          assert hasattr(m, "TelegramConfigError")
+          assert hasattr(m, "__version__")
+          print("OK:", m.__version__)
+          PYEOF
