@@ -7,6 +7,8 @@ Retry-After), and that send_with_retry never raises.
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import respx
 
@@ -93,6 +95,7 @@ def test_429_honors_retry_after_without_consuming_budget() -> None:
     respx.post(SEND_URL).mock(
         side_effect=[
             httpx.Response(429, headers={"retry-after": "7"}),
+            _ok(),  # consumed by the one-time 429 heads-up notification
             httpx.Response(429, headers={"retry-after": "3"}),
             _ok(),
         ]
@@ -122,8 +125,6 @@ def test_parse_mode_included_when_set() -> None:
     route = respx.post(SEND_URL).mock(return_value=_ok())
     sleep = _RecordingSleep()
     TelegramSender(TOKEN, CHAT, API_BASE, parse_mode="HTML", sleep=sleep).send_with_retry("hi")
-    import json
-
     body = json.loads(route.calls[0].request.content.decode())
     assert body["parse_mode"] == "HTML"
 
@@ -149,6 +150,7 @@ def test_429_with_non_numeric_retry_after_uses_default() -> None:
     respx.post(SEND_URL).mock(
         side_effect=[
             httpx.Response(429, headers={"retry-after": "Wed, 21 Oct 2015 07:28:00 GMT"}),
+            _ok(),  # consumed by the one-time 429 heads-up notification
             _ok(),
         ]
     )
@@ -166,7 +168,11 @@ def test_429_huge_retry_after_is_clamped_to_max_delay() -> None:
     from tg_logging_handler.sender import _MAX_DELAY_SECONDS
 
     respx.post(SEND_URL).mock(
-        side_effect=[httpx.Response(429, headers={"retry-after": "86400"}), _ok()]
+        side_effect=[
+            httpx.Response(429, headers={"retry-after": "86400"}),
+            _ok(),  # consumed by the one-time 429 heads-up notification
+            _ok(),
+        ]
     )
     sleep = _RecordingSleep()
     outcome = _sender(sleep).send_with_retry("hi")
@@ -178,7 +184,11 @@ def test_429_huge_retry_after_is_clamped_to_max_delay() -> None:
 def test_429_negative_retry_after_is_floored_to_zero() -> None:
     # A negative Retry-After would make time.sleep raise; it must floor to 0.
     respx.post(SEND_URL).mock(
-        side_effect=[httpx.Response(429, headers={"retry-after": "-5"}), _ok()]
+        side_effect=[
+            httpx.Response(429, headers={"retry-after": "-5"}),
+            _ok(),  # consumed by the one-time 429 heads-up notification
+            _ok(),
+        ]
     )
     sleep = _RecordingSleep()
     outcome = _sender(sleep).send_with_retry("hi")
@@ -191,7 +201,11 @@ def test_429_infinite_retry_after_falls_back_to_default() -> None:
     # float("inf")/"nan" parse without ValueError but would crash time.sleep;
     # they are normalized to the 1s default before the clamp ever sees them.
     respx.post(SEND_URL).mock(
-        side_effect=[httpx.Response(429, headers={"retry-after": "inf"}), _ok()]
+        side_effect=[
+            httpx.Response(429, headers={"retry-after": "inf"}),
+            _ok(),  # consumed by the one-time 429 heads-up notification
+            _ok(),
+        ]
     )
     sleep = _RecordingSleep()
     outcome = _sender(sleep).send_with_retry("hi")
@@ -210,8 +224,75 @@ def test_a_5xx_between_429s_resets_the_consecutive_run() -> None:
         pattern.append(httpx.Response(429, headers={"retry-after": "1"}))
         pattern.append(httpx.Response(500))
     pattern.append(_ok())
+    # The first 429 fires the one-time heads-up, which POSTs once; insert its
+    # response right after so the send path still sees the intended 429/500 run.
+    pattern.insert(1, _ok())
     respx.post(SEND_URL).mock(side_effect=pattern)
     sleep = _RecordingSleep()
     # Enough retry budget to absorb every 5xx in the pattern.
     outcome = _sender(sleep, max_retries=_MAX_RATE_LIMIT_WAITS + 3).send_with_retry("hi")
     assert outcome.delivered is True  # never trips the 429 cap
+
+
+# The distinctive tail of the one-time heads-up body (see TelegramSender._notify_rate_limited).
+_NOTICE_MARKER = "recommend checking this up manually"
+
+
+def _notice_count(route: respx.Route) -> int:
+    """How many POSTs to sendMessage carried the 429 heads-up notice."""
+    return sum(
+        _NOTICE_MARKER in json.loads(call.request.content.decode())["text"] for call in route.calls
+    )
+
+
+@respx.mock
+def test_first_429_sends_one_time_heads_up_notice() -> None:
+    # The first 429 must post a heads-up ("a 429 happened, check manually")
+    # exactly once, then the message itself still gets delivered on retry.
+    route = respx.post(SEND_URL).mock(
+        side_effect=[
+            httpx.Response(429, headers={"retry-after": "1"}),
+            _ok(),  # the heads-up notice POST
+            _ok(),  # the retried original message
+        ]
+    )
+    sleep = _RecordingSleep()
+    outcome = _sender(sleep).send_with_retry("real log line")
+    assert outcome.delivered is True
+    assert _notice_count(route) == 1  # heads-up sent exactly once
+
+
+@respx.mock
+def test_heads_up_notice_is_sent_only_once_across_many_429s() -> None:
+    # A storm of 429s must not spam the chat with a notice per 429 — it is a
+    # one-time heads-up for the life of the sender.
+    route = respx.post(SEND_URL).mock(
+        side_effect=[
+            httpx.Response(429, headers={"retry-after": "1"}),
+            _ok(),  # the heads-up notice POST (fires on the first 429 only)
+            httpx.Response(429, headers={"retry-after": "1"}),
+            httpx.Response(429, headers={"retry-after": "1"}),
+            _ok(),  # the retried original message
+        ]
+    )
+    sleep = _RecordingSleep()
+    outcome = _sender(sleep).send_with_retry("real log line")
+    assert outcome.delivered is True
+    assert _notice_count(route) == 1  # still only one notice despite 3 x 429
+
+
+@respx.mock
+def test_heads_up_notice_failure_is_swallowed() -> None:
+    # Being rate limited, the notice POST may itself fail; that must never
+    # bubble out of send_with_retry or stop the original message delivering.
+    route = respx.post(SEND_URL).mock(
+        side_effect=[
+            httpx.Response(429, headers={"retry-after": "1"}),
+            httpx.ConnectError("notice send failed"),  # the heads-up POST fails
+            _ok(),  # the retried original message still lands
+        ]
+    )
+    sleep = _RecordingSleep()
+    outcome = _sender(sleep).send_with_retry("real log line")
+    assert outcome.delivered is True
+    assert route.call_count == 3  # send, failed notice, successful resend
