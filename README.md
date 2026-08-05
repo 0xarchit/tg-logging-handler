@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="tg-logging-handler logo">
+</p>
+
 # tg-logging-handler
 
 [![CI](https://github.com/0xarchit/tg-logging-handler/actions/workflows/ci.yml/badge.svg)](https://github.com/0xarchit/tg-logging-handler/actions/workflows/ci.yml)
@@ -6,6 +10,7 @@
 [![PyPI](https://img.shields.io/pypi/v/tg-logging-handler.svg)](https://pypi.org/project/tg-logging-handler/)
 [![Python versions](https://img.shields.io/pypi/pyversions/tg-logging-handler.svg)](https://pypi.org/project/tg-logging-handler/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 
 Production-grade Telegram destination for Python's standard `logging` module.
 
