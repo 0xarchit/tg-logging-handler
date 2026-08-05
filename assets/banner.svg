@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <defs>
+    <!-- Background Gradient -->
+    <radialGradient id="banner-bg" cx="50%" cy="50%" r="75%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="60%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#030712"/>
+    </radialGradient>
+
+    <!-- Telegram Official Gradient -->
+    <linearGradient id="tg-blue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#37BBFE"/>
+      <stop offset="100%" stop-color="#007DBB"/>
+    </linearGradient>
+
+    <!-- Neon Pulse Streams -->
+    <linearGradient id="pulse-left" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.05"/>
+      <stop offset="60%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#37BBFE"/>
+    </linearGradient>
+
+    <linearGradient id="pulse-right" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#37BBFE"/>
+      <stop offset="40%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0.05"/>
+    </linearGradient>
+
+    <!-- Glow Filters -->
+    <filter id="neon-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feComponentTransfer in="blur" result="boost">
+        <feFuncA type="linear" slope="0.8"/>
+      </feComponentTransfer>
+      <feComposite in="SourceGraphic" in2="boost" operator="over" />
+    </filter>
+
+    <filter id="badge-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="16" result="blur" />
+      <feComponentTransfer in="blur" result="boost">
+        <feFuncA type="linear" slope="0.5"/>
+      </feComponentTransfer>
+      <feComposite in="SourceGraphic" in2="boost" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- 1. Background Base Container -->
+  <rect width="1280" height="640" rx="32" fill="url(#banner-bg)" stroke="#1e293b" stroke-width="4"/>
+
+  <!-- 2. Subtle Grid Pattern -->
+  <g opacity="0.06" stroke="#38bdf8" stroke-width="1.5">
+    <path d="M 0 128 H 1280 M 0 256 H 1280 M 0 384 H 1280 M 0 512 H 1280" />
+    <path d="M 160 0 V 640 M 320 0 V 640 M 480 0 V 640 M 640 0 V 640 M 800 0 V 640 M 960 0 V 640 M 1120 0 V 640" />
+  </g>
+
+  <!-- 3. Dynamic Background Ambient Waves -->
+  <g opacity="0.12" fill="none" stroke="#38bdf8" stroke-width="2" stroke-dasharray="6 10">
+    <path d="M 0 140 Q 320 80 640 140 T 1280 140" />
+    <path d="M 0 540 Q 320 600 640 540 T 1280 540" />
+  </g>
+
+  <!-- 4. Pulse Waveform Stream (Logo pulse wave stays at X=200, straight line extends to X=1280) -->
+  <g filter="url(#neon-glow)">
+    <!-- Left Input Pulse Line -->
+    <path d="M 0 320
+             H 40
+             L 60 260
+             L 78 380
+             L 95 200
+             L 115 430
+             L 130 320
+             H 140"
+          fill="none"
+          stroke="url(#pulse-left)"
+          stroke-width="7"
+          stroke-linecap="round"
+          stroke-linejoin="round"/>
+
+    <!-- Right Exit Pulse Line (Full logo wave ending at X=372, Bezier curve down to Y=350, straight line out) -->
+    <path d="M 270 320
+             H 285
+             L 300 270
+             L 320 370
+             L 338 230
+             L 358 370
+             L 372 320
+             C 390 320, 400 350, 430 350
+             H 1280"
+          fill="none"
+          stroke="url(#pulse-right)"
+          stroke-width="7"
+          stroke-linecap="round"
+          stroke-linejoin="round"/>
+  </g>
+
+  <!-- 5. Left Section: Logo Emblem (Positioned at X=205, Y=320) -->
+  <g transform="translate(205, 320)" filter="url(#badge-glow)">
+    <circle cx="0" cy="0" r="75" fill="none" stroke="#38bdf8" stroke-width="2" opacity="0.5" stroke-dasharray="5 5"/>
+
+    <g transform="scale(4.8) translate(-16, -16)">
+      <circle cx="16" cy="16" r="14" fill="url(#tg-blue)" stroke="#ffffff" stroke-width="0.5"/>
+      <path d="M22.9866 10.2088C23.1112 9.40332 22.3454 8.76755 21.6292 9.082L7.36482 15.3448C6.85123 15.5703 6.8888 16.3483 7.42147 16.5179L10.3631 17.4547C10.9246 17.6335 11.5325 17.541 12.0228 17.2023L18.655 12.6203C18.855 12.4821 19.073 12.7665 18.9021 12.9426L14.1281 17.8646C13.665 18.3421 13.7569 19.1512 14.314 19.5005L19.659 22.8523C20.2585 23.2282 21.0297 22.8506 21.1418 22.1261L22.9866 10.2088Z" fill="#FFFFFF"/>
+    </g>
+
+    <circle cx="-65" cy="0" r="5" fill="#38bdf8" stroke="#ffffff" stroke-width="2"/>
+    <circle cx="65" cy="0" r="5" fill="#10b981" stroke="#ffffff" stroke-width="2"/>
+  </g>
+
+  <!-- 6. Right Section: Text Group Pushed Right to X=420 to CLEAR ALL Pulse Spikes Completely -->
+  <g transform="translate(420, 0)">
+    <!-- Main Title -->
+    <text x="0" y="230" fill="#ffffff" font-family="system-ui, -apple-system, sans-serif" font-size="58" font-weight="800" letter-spacing="-1">
+      tg-logging-handler
+    </text>
+
+    <!-- Subtitle Description -->
+    <text x="0" y="285" fill="#94a3b8" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="500">
+      Production-grade Telegram destination for Python's standard logging module.
+    </text>
+
+    <!-- Feature Badges -->
+    <g transform="translate(0, 410)">
+      <!-- Badge 1: Python 3+ -->
+      <g transform="translate(0, 0)">
+        <rect width="145" height="42" rx="21" fill="#1e293b" stroke="#3b82f6" stroke-width="1.5"/>
+        <circle cx="24" cy="21" r="6" fill="#3776AB"/>
+        <text x="42" y="26" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="14" font-weight="700">PYTHON 3+</text>
+      </g>
+
+      <!-- Badge 2: Async & Thread-Safe -->
+      <g transform="translate(160, 0)">
+        <rect width="225" height="42" rx="21" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+        <circle cx="24" cy="21" r="6" fill="#10b981"/>
+        <text x="42" y="26" fill="#34d399" font-family="system-ui, sans-serif" font-size="14" font-weight="700">ASYNC &amp; THREAD-SAFE</text>
+      </g>
+
+      <!-- Badge 3: Lightweight -->
+      <g transform="translate(400, 0)">
+        <rect width="165" height="42" rx="21" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5"/>
+        <circle cx="24" cy="21" r="6" fill="#f59e0b"/>
+        <text x="42" y="26" fill="#fbbf24" font-family="system-ui, sans-serif" font-size="14" font-weight="700">LIGHTWEIGHT</text>
+      </g>
+    </g>
+  </g>
+</svg>
