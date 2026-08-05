@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="tg-logging-handler logo">
+  <img src="assets/logo.svg" alt="tg-logging-handler logo" width="30%">
 </p>
 
 # tg-logging-handler
