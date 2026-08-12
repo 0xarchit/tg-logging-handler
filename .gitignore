@@ -18,6 +18,7 @@ htmlcov/
 
 # Working docs (kept local)
 plan.md
+docs/
 
 # Claude Code local tooling (not part of the package)
 .claude/
