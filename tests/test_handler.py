@@ -1,5 +1,4 @@
-"""Handler-level tests: constructor validation, emit contract, close, independence.
-"""
+"""Handler-level tests: constructor validation, emit contract, close, independence."""
 
 from __future__ import annotations
 
