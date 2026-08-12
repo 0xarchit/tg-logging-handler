@@ -1,4 +1,4 @@
-"""Unit tests for parse_mode escaping (FR-18, TESTING.md §2.1).
+"""Unit tests for parse_mode escaping.
 
 Pure-logic: escape() output for each mode, covering the special-char sets and
 the "unchanged when nothing special" and None-passthrough cases.

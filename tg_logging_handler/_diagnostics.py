@@ -1,8 +1,8 @@
-"""Internal diagnostics — write straight to ``sys.stderr``, never via ``logging``.
+"""Internal diagnostics: write straight to ``sys.stderr``, never via ``logging``.
 
 Using ``logging`` here would risk an infinite loop if the user attaches this
 handler to the root logger, so recursion is made structurally impossible by
-bypassing ``logging`` entirely (ARCHITECTURE.md §3.5 — load-bearing decision).
+bypassing ``logging`` entirely; a load-bearing decision.
 """
 
 from __future__ import annotations

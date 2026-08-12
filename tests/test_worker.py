@@ -1,6 +1,6 @@
 """Worker-thread resilience: an error on one record must not kill the thread.
 
-Proves the ARCHITECTURE.md §4 formatter-failure and sender-failure rows by
+Proves the formatter-failure and sender-failure resilience rows by
 driving ``WorkerThread`` directly with fakes (no real HTTP, no handler).
 """
 

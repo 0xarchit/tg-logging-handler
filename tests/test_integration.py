@@ -1,6 +1,8 @@
 """End-to-end tests: a real logger with the handler attached → Telegram API calls.
 
-Covers TESTING.md §2.3 scenarios 1-2 against a mocked Bot API.
+The real handler and worker thread run against a mocked Bot API: single sends,
+batching, outage/recovery, overflow policies, saturated queues, and parse-mode
+escaping on the wire.
 """
 
 from __future__ import annotations
@@ -85,7 +87,7 @@ def test_burst_of_100_is_batched(
     fast_handler_factory: HandlerFactory,
     wait_for: WaitFor,
 ) -> None:
-    """M1 exit: 100 logs at batch_size=10 → ~10 batched sends, not 100 (FR-7)."""
+    """100 logs at batch_size=10 → ~10 batched sends, not 100."""
     logger = make_logger("burst")
     # Large interval so only the size trigger fires: each batch is exactly full.
     handler = fast_handler_factory(batch_size=10, flush_interval=30.0)
@@ -109,7 +111,7 @@ def test_outage_degrades_gracefully_without_raising(
     fast_handler_factory: HandlerFactory,
     wait_for: WaitFor,
 ) -> None:
-    """M1 exit: a total Bot API outage drops batches and counts them, never raising."""
+    """A total Bot API outage drops batches and counts them, never raising."""
     mock_api.post(f"{API_BASE}/bot{TEST_TOKEN}/sendMessage").mock(return_value=httpx.Response(500))
     logger = make_logger("outage")
     handler = fast_handler_factory(batch_size=5, max_retries=1)
@@ -148,7 +150,7 @@ def test_recovery_after_transient_outage(
 
 
 def _strip_header(part: str) -> str:
-    """Drop the leading ``(i/n)\n`` header a split part carries (FR-13)."""
+    """Drop the leading ``(i/n)\n`` header a split part carries."""
     return part.split("\n", 1)[1]
 
 
@@ -158,7 +160,7 @@ def test_oversized_batch_splits_into_numbered_parts(
     fast_handler_factory: HandlerFactory,
     wait_for: WaitFor,
 ) -> None:
-    """M2 scenario 4: oversized batch → numbered parts, all under the cap (FR-13)."""
+    """Oversized batch → numbered parts, all under the cap."""
     logger = make_logger("scenario4")
     handler = fast_handler_factory(overflow="split", batch_size=1)
     logger.addHandler(handler)
@@ -183,7 +185,7 @@ def test_oversized_batch_truncates_to_cap(
     fast_handler_factory: HandlerFactory,
     wait_for: WaitFor,
 ) -> None:
-    """M2 scenario 5: oversized batch → one truncated message under the cap (FR-13)."""
+    """Oversized batch → one truncated message under the cap."""
     logger = make_logger("scenario5")
     handler = fast_handler_factory(overflow="truncate", batch_size=1)
     logger.addHandler(handler)
@@ -205,7 +207,7 @@ def test_oversized_batch_drops_and_counts(
     fast_handler_factory: HandlerFactory,
     wait_for: WaitFor,
 ) -> None:
-    """M2 scenario 6: oversized batch with overflow='drop' → nothing sent, counted."""
+    """Oversized batch with overflow='drop' → nothing sent, counted."""
     logger = make_logger("scenario6")
     handler = fast_handler_factory(overflow="drop", batch_size=1)
     logger.addHandler(handler)
@@ -225,7 +227,7 @@ def test_queue_full_drop_newest_counts_and_keeps_oldest(
     fast_handler_factory: HandlerFactory,
     wait_for: WaitFor,
 ) -> None:
-    """M2 scenario 10: saturated queue under slow transport → newest dropped, counted."""
+    """Saturated queue under slow transport → newest dropped, counted."""
     # Gate the transport so the worker stalls on its first send, guaranteeing the
     # bounded queue saturates while later records are still being emitted.
     release = threading.Event()
@@ -263,7 +265,7 @@ def test_markdownv2_wire_text_is_escaped_and_carries_parse_mode(
     fast_handler_factory: HandlerFactory,
     wait_for: WaitFor,
 ) -> None:
-    """M3 scenario: a MarkdownV2 handler escapes specials on the wire (FR-17/18).
+    """A MarkdownV2 handler escapes specials on the wire.
 
     A log line full of MarkdownV2 specials would 400 unescaped; the handler must
     send the escaped form and set ``parse_mode`` so Telegram renders it safely.
@@ -288,7 +290,7 @@ def test_html_wire_text_is_escaped_and_carries_parse_mode(
     fast_handler_factory: HandlerFactory,
     wait_for: WaitFor,
 ) -> None:
-    """M3 scenario: an HTML handler entity-escapes ``& < >`` on the wire (FR-17/18)."""
+    """An HTML handler entity-escapes ``& < >`` on the wire."""
     logger = make_logger("scenario-html")
     handler = fast_handler_factory(parse_mode="HTML", batch_size=1)
     logger.addHandler(handler)

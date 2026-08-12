@@ -1,11 +1,11 @@
-"""HTTP sender — one ``httpx.Client`` per handler, lazily created on the worker thread.
+"""HTTP sender: one ``httpx.Client`` per handler, lazily created on the worker thread.
 
-M1: adds retry with exponential backoff + jitter (FR-10), 429 ``Retry-After``
-handling that does not consume the retry budget (FR-11), and permanent-4xx
-fail-fast (ARCHITECTURE.md §4). The client is created lazily inside
+Adds retry with exponential backoff + jitter, 429 ``Retry-After``
+handling that does not consume the retry budget, and permanent-4xx
+fail-fast. The client is created lazily inside
 :meth:`TelegramSender.send` so it is bound to the worker thread that uses it,
-never the constructing thread (ARCHITECTURE.md §3.6). ``sleep`` is injectable
-so the backoff math is testable with a fake clock (TESTING.md §1/§3).
+never the constructing thread. ``sleep`` is injectable
+so the backoff math is testable with a fake clock.
 """
 
 from __future__ import annotations
@@ -32,11 +32,11 @@ _MAX_RATE_LIMIT_WAITS = 10  # cap consecutive 429 waits so a stuck 429 can't spi
 
 @dataclass(frozen=True)
 class SendOutcome:
-    """Result of one ``send_with_retry`` call — delivered or not, and retry count.
+    """Result of one ``send_with_retry`` call: delivered or not, and retry count.
 
     ``delivered=False`` means the message was dropped after retries were
     exhausted (or failed permanently); the worker counts it as ``failed`` so
-    ``sent`` stays accurate (ARCHITECTURE.md §4, FR-12).
+    ``sent`` stays accurate.
     """
 
     delivered: bool
@@ -83,13 +83,13 @@ class TelegramSender:
 
         Returns a :class:`SendOutcome`: ``delivered`` is ``True`` only if
         Telegram accepted the message, and ``retries`` counts the transient
-        retries performed (0 on first-try success). Never raises — exhausted or
+        retries performed (0 on first-try success). Never raises; exhausted or
         permanent failures return ``delivered=False`` so the worker counts them
-        as ``failed`` and reports to stderr (FR-10/11/12; ARCHITECTURE.md §4).
-        429s honor ``Retry-After`` without consuming the retry budget (FR-11),
+        as ``failed`` and reports to stderr.
+        429s honor ``Retry-After`` without consuming the retry budget,
         capped at ``_MAX_RATE_LIMIT_WAITS`` consecutive waits so a stuck 429
         cannot spin the worker forever; permanent 4xx are not retried at all,
-        since retrying a broken request just wastes the budget (ARCHITECTURE.md §4).
+        since retrying a broken request just wastes the budget.
         """
         attempts = 0
         rate_limited = 0
@@ -101,7 +101,7 @@ class TelegramSender:
             except TelegramSendError as exc:
                 if exc.retry_after is not None:
                     # 429 rate limit: honor Retry-After without consuming the
-                    # retry budget (FR-11), but cap consecutive waits so a
+                    # retry budget, but cap consecutive waits so a
                     # stuck/malicious 429 can't spin the worker forever and
                     # block drain/shutdown.
                     if not self._notified_rate_limit:
@@ -130,7 +130,7 @@ class TelegramSender:
     def _notify_rate_limited(self) -> None:
         """Best-effort, one-time heads-up that Telegram started rate limiting.
 
-        Posted directly — no retry, no 429 classification — so it can never
+        Posted directly (no retry, no 429 classification) so it can never
         recurse into this notice path or block the worker on a backoff. Any
         failure (likely, since we are being rate limited) is reported to stderr
         and swallowed. The message body carries no token or chat context.
@@ -138,7 +138,7 @@ class TelegramSender:
         text = (
             "tg-logging-handler: a 429 (Too Many Requests) just came back from "
             "the Telegram API. Logs will keep retrying and may keep hitting the "
-            "rate limit — recommend checking this up manually."
+            "rate limit; recommend checking this up manually."
         )
         payload = {"chat_id": self._chat_id, "text": text, "disable_web_page_preview": True}
         try:
@@ -171,7 +171,7 @@ class TelegramSender:
                 retry_after = float(response.headers.get("retry-after", "1.0"))
             except ValueError:
                 # Retry-After may be an HTTP-date (RFC 9110), not seconds. We
-                # don't parse dates — fall back to a conservative 1s default.
+                # don't parse dates; fall back to a conservative 1s default.
                 retry_after = 1.0
             if math.isnan(retry_after) or retry_after == float("inf"):
                 retry_after = 1.0

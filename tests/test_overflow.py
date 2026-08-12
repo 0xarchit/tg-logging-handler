@@ -1,4 +1,4 @@
-"""Unit tests for overflow: split / truncate / drop (FR-13/14, TESTING.md §2.1).
+"""Unit tests for overflow: split / truncate / drop.
 
 Pure-logic against strings of known length, small ``max_length`` for readable
 cases plus the real 4096 boundary. The key invariant: split parts, minus their
@@ -105,7 +105,7 @@ def _trailing_backslashes(s: str) -> int:
 def test_split_markdownv2_never_dangles_an_escape() -> None:
     # A long single line of escaped dots (\. pairs, no newlines) forces hard
     # splits. No piece may end mid-escape, i.e. with an odd run of backslashes
-    # (FR-14 best-effort safe-split), and parts still reconstruct exactly.
+    # (best-effort safe-split), and parts still reconstruct exactly.
     from tg_logging_handler.formatting import escape
 
     escaped = escape("." * 500, "MarkdownV2")  # -> r"\.\.\." ...

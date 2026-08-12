@@ -1,4 +1,4 @@
-"""Oversized-message handling: split / truncate / drop (FR-13/14).
+"""Oversized-message handling: split / truncate / drop.
 
 Telegram caps a single ``sendMessage`` text at ~4096 characters. When a
 formatted batch exceeds that, the configured ``overflow`` policy decides what
@@ -11,7 +11,7 @@ goes on the wire:
 
 Input is already escaped for ``parse_mode`` by the worker (see formatting.py),
 so this module never re-escapes content. It only needs ``parse_mode`` for two
-things (FR-14, best-effort per ARCHITECTURE.md §3.7):
+things (best-effort):
 
 1. Its own part headers (``(1/3)\\n``) and truncation marker contain characters
    that are MarkdownV2/HTML specials, so they are escaped before being glued on.
@@ -34,7 +34,7 @@ __all__ = ["prepare_messages", "split_text", "truncate_text"]
 # at the 4096-char boundary, so a part's header + content never exceeds the cap.
 _PART_HEADER_RESERVE = 16
 
-# Appended to a truncated message so readers know content was cut (FR-13).
+# Appended to a truncated message so readers know content was cut.
 _TRUNCATION_MARKER = "\n… [truncated]"
 
 
@@ -48,7 +48,7 @@ def prepare_messages(
         overflow: One of ``"split"``, ``"truncate"``, ``"drop"``.
         max_length: The per-message character cap (Telegram's ~4096).
         parse_mode: The active parse mode, so headers/markers can be escaped and
-            splits avoid cutting an escape sequence (FR-14). ``None`` = plain.
+            splits avoid cutting an escape sequence. ``None`` = plain.
 
     Returns:
         The messages to send, in order. A message that fits is returned
@@ -72,7 +72,7 @@ def truncate_text(text: str, max_length: int, parse_mode: str | None = None) -> 
     If ``text`` already fits it is returned unchanged. Otherwise the result is at
     most ``max_length`` chars and ends with the (parse-mode-escaped) marker. The
     cut is nudged off any trailing escape sequence so a MarkdownV2 ``\\X`` pair is
-    never split (FR-14).
+    never split.
     """
     if len(text) <= max_length:
         return text
@@ -112,7 +112,7 @@ def _split_into_pieces(text: str, budget: int) -> list[str]:
     Pieces concatenate back to ``text`` exactly. Each cut prefers the last
     newline within the window (kept at the end of the earlier piece so nothing
     is dropped); with no newline available it hard-splits at ``budget``, backed
-    off any escape sequence so a ``\\X`` pair is never broken (FR-14).
+    off any escape sequence so a ``\\X`` pair is never broken.
     """
     pieces: list[str] = []
     start = 0
@@ -137,15 +137,15 @@ def _safe_cut(text: str, cut: int, floor: int = 0) -> int:
 
     A cut immediately after an odd number of backslashes would split a
     MarkdownV2 ``\\X`` escape. Back up over the trailing backslash run; if that
-    would cross ``floor`` (no forward progress), keep the original cut — a
-    dangling backslash is the documented best-effort fallback (ARCHITECTURE.md
-    §3.7), better than an infinite loop.
+    would cross ``floor`` (no forward progress), keep the original cut; a
+    dangling backslash is the accepted best-effort fallback, better than an
+    infinite loop.
     """
     pos = cut
     while pos > floor and text[pos - 1] == "\\":
         pos -= 1
     # Count the backslash run we skipped; if it was odd, the last backslash
-    # escapes the char at ``cut`` — drop one more so the pair moves whole to the
+    # escapes the char at ``cut``; drop one more so the pair moves whole to the
     # next piece. Even runs are already balanced (``\\`` = literal backslash).
     if (cut - pos) % 2 == 1 and cut - 1 >= floor:
         return cut - 1

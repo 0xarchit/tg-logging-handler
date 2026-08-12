@@ -13,7 +13,7 @@ import respx
 
 from tg_logging_handler import TelegramLoggingHandler
 
-# Only ever used against respx mocks — never a real Telegram call.
+# Only ever used against respx mocks; never a real Telegram call.
 TEST_TOKEN = "123456:TEST-TOKEN"
 TEST_CHAT_ID = "12345"
 API_BASE = "https://api.telegram.org"
@@ -81,7 +81,7 @@ def fast_handler_factory(
 
 @pytest.fixture
 def wait_for() -> Callable[..., bool]:
-    """Poll a predicate until true or timeout — avoids fixed sleeps for async work."""
+    """Poll a predicate until true or timeout; avoids fixed sleeps for async work."""
 
     def _wait_for(predicate: Callable[[], bool], timeout: float = 5.0) -> bool:
         deadline = time.monotonic() + timeout

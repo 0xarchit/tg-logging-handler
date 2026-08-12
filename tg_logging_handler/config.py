@@ -28,7 +28,7 @@ def resolve_credentials(
 
     Raises:
         TelegramConfigError: If either value is missing or the token has an
-            obviously invalid format (FR-3).
+            obviously invalid format.
     """
     token = token or os.environ.get("TG_TOKEN")
     if token:
@@ -60,7 +60,7 @@ def _invalid_token_message(token: str) -> str:
     """Build the invalid-token error, redacting the secret.
 
     Only ever shows the first/last 4 characters, and only when the token is
-    long enough that those windows don't overlap — a short string could be the
+    long enough that those windows don't overlap; a short string could be the
     whole secret, so it is redacted entirely (never embed the raw token).
     """
     shown = f"{token[:4]!r}…{token[-4:]!r}" if len(token) >= 12 else "(redacted)"

@@ -1,11 +1,11 @@
-"""parse_mode escaping — make formatter output safe for Telegram (FR-17/18).
+"""parse_mode escaping: make formatter output safe for Telegram.
 
 A ``logging.Formatter`` produces plain text; when a ``parse_mode`` is set,
 Telegram parses that text for entities and *rejects the whole request* if it
 finds an unbalanced ``*``/``_``/``<``/``&``/etc. Since the text is entirely
 log-derived (messages, tracebacks, arbitrary user data), we escape it wholesale
 for the chosen mode so no stray character can break parsing. Users who genuinely
-want rich formatting supply their own already-formatted text — but the common
+want rich formatting supply their own already-formatted text, but the common
 case (attach the handler, keep logging) must never 400 because a traceback
 contained an underscore.
 
@@ -28,7 +28,7 @@ __all__ = ["escape"]
 # (Bot API: "Formatting options" → MarkdownV2). Order does not matter because
 # each is replaced independently. The backslash IS included: in MarkdownV2 a
 # literal ``\`` must be written ``\\``, and escaping it also means every escape
-# sequence we emit is a clean two-char ``\X`` pair — which the splitter relies
+# sequence we emit is a clean two-char ``\X`` pair, which the splitter relies
 # on to never cut a message in the middle of an escape (see overflow.py).
 _MARKDOWN_V2_SPECIALS = "\\" + r"_*[]()~`>#+-=|{}.!"
 
@@ -46,7 +46,7 @@ def escape(text: str, parse_mode: str | None) -> str:
 
     Returns:
         The escaped text. ``None`` mode returns ``text`` unchanged. An unknown
-        mode is treated as plain text (returned unchanged) rather than raising —
+        mode is treated as plain text (returned unchanged) rather than raising;
         the handler validates the mode at construction, so this is defensive.
     """
     if parse_mode == "HTML":

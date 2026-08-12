@@ -1,7 +1,6 @@
 """Internal constants shared across modules.
 
-Centralised here so magic numbers are not duplicated across files
-(see CODING_STANDARDS.md §3).
+Centralised here so magic numbers are not duplicated across files.
 """
 
 from __future__ import annotations

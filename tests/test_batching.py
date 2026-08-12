@@ -1,7 +1,7 @@
 """Unit tests for BatchAccumulator: size/interval triggers, shutdown, quiet-idle.
 
-Covers FR-7/8/9 and the "flush timer inactive while empty" rule. No real
-sleeps — a scripted monotonic clock is injected (TESTING.md §1/§3). The clock
+Covers the "flush timer inactive while empty" rule. No real
+sleeps; a scripted monotonic clock is injected. The clock
 is scripted (not wall-clock) so the interval math is deterministic AND the
 queue never blocks: ``remaining`` hits ``<= 0`` exactly as the queue drains, so
 ``collect`` breaks instead of waiting on an empty queue.
@@ -97,7 +97,7 @@ def test_shutdown_when_batch_empty() -> None:
 
 
 def test_quiet_handler_idles_without_waking() -> None:
-    """An empty batch never starts the flush timer — collect just waits on get."""
+    """An empty batch never starts the flush timer; collect just waits on get."""
     acc, q = _mk(flush_interval=30.0)
     batch, shutdown = acc.collect(q, Shutdown, timeout=0.02)
     assert batch == []

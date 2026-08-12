@@ -28,8 +28,8 @@ class StatsCollector:
     """Thread-safe counter bag owned by one handler instance.
 
     The worker thread mutates counters; ``handler.stats`` reads them from
-    arbitrary application threads, so a lock guards all access
-    (ARCHITECTURE.md §3.3 — it is a cold path, a single lock is fine).
+    arbitrary application threads, so a lock guards all access; it is a cold
+    path, a single lock is fine.
     """
 
     def __init__(self) -> None:

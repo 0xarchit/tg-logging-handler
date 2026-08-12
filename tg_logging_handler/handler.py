@@ -1,8 +1,7 @@
-"""The public ``TelegramLoggingHandler`` — a thin ``logging.Handler`` subclass.
+"""The public ``TelegramLoggingHandler``: a thin ``logging.Handler`` subclass.
 
 Business logic (sending, batching, retries) lives in the worker/sender modules;
-this class only wires them together and implements the stdlib handler contract
-(CODING_STANDARDS.md §2).
+this class only wires them together and implements the stdlib handler contract.
 """
 
 from __future__ import annotations
@@ -27,20 +26,19 @@ class TelegramLoggingHandler(logging.Handler):
     """A ``logging.Handler`` that delivers records to a Telegram chat.
 
     Records are enqueued by ``emit`` (never blocking on network I/O) and sent by
-    a single background daemon thread. See ``docs/API_SPEC.md`` for the full
-    parameter reference.
+    a single background daemon thread.
 
     Args:
         token: Bot token. Falls back to ``TG_TOKEN``. Raises if neither is set.
         chat_id: Target chat id. Falls back to ``TG_CHAT_ID``. Raises if neither is set.
         level: Minimum level, passed to ``setLevel``. Defaults to ``WARNING``.
-        batch_size: Max records per outgoing message (``>= 1``). Batching lands in M1.
+        batch_size: Max records per outgoing message (``>= 1``).
         flush_interval: Max seconds a partial batch waits (``>= 0``).
-        max_retries: Retry budget for transient failures (``>= 0``). Honored from M1.
-        overflow: Oversized-message policy. Honored from M2.
+        max_retries: Retry budget for transient failures (``>= 0``).
+        overflow: Oversized-message policy.
         parse_mode: Telegram parse mode forwarded to ``sendMessage``.
         queue_maxsize: Bounded queue size (``0`` = unbounded, memory risk).
-        queue_full_policy: Behavior when the queue is full. Only ``drop_newest`` in M0.
+        queue_full_policy: Behavior when the queue is full.
         shutdown_timeout: Max seconds ``close`` waits for the worker to drain.
         validate: If ``True``, make a synchronous ``getMe`` check at construction.
         api_base_url: Bot API base URL (override for self-hosted servers/tests).
@@ -81,8 +79,8 @@ class TelegramLoggingHandler(logging.Handler):
         if validate:
             validate_token(resolved_token, api_base_url)
 
-        # Full signature is live: batching + retry/backoff/429 (M1), overflow +
-        # queue policies + full stats (M2), parse_mode escaping (M3). The worker
+        # Full signature is live: batching + retry/backoff/429, overflow +
+        # queue policies + full stats, parse_mode escaping. The worker
         # escapes each record for parse_mode; the sender forwards parse_mode to
         # sendMessage so Telegram renders the (now-safe) entities.
         self._shutdown_timeout = shutdown_timeout
@@ -118,11 +116,11 @@ class TelegramLoggingHandler(logging.Handler):
             item = self._snapshot(record)
             result = self._put_policy(self._queue, item)
             # drop_oldest can lose an older record even while enqueueing the new
-            # one, so count both outcomes from the PutResult (FR-20).
+            # one, so count both outcomes from the PutResult.
             if result.enqueued:
                 self._stats.increment("queued")
             self._stats.increment("dropped", result.dropped)
-        except Exception:  # emit must never propagate (ARCHITECTURE §3.2)
+        except Exception:  # emit must never propagate
             self.handleError(record)
 
     @staticmethod
