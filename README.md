@@ -157,11 +157,3 @@ uv sync                          # create .venv + install package + dev deps
 uv run pytest                    # run the test suite
 uv run ruff check . && uv run mypy   # lint + type-check
 ```
-
-Full specification lives in [`docs/`](docs/): [PRD](docs/PRD.md),
-[Architecture](docs/ARCHITECTURE.md), [API spec](docs/API_SPEC.md),
-[Testing](docs/TESTING.md), [Roadmap](docs/ROADMAP.md).
-
-## License
-
-See [LICENSE](LICENSE).
