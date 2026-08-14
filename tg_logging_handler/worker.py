@@ -1,11 +1,13 @@
 """The worker thread: consumes the queue, batches records, drives the sender.
 
-M1: the loop drains queued records into a :class:`BatchAccumulator` and sends
-each flushed batch as one or more ``sendMessage`` calls, with retry/backoff/429
-handling inside :meth:`TelegramSender.send_with_retry`. The loop is
-exception-safe end to end — an unexpected error reports to stderr, increments
-``failed``, and the loop continues; it must never kill the thread
-(CODING_STANDARDS.md §4, ARCHITECTURE.md §3.4/§4).
+The loop drains queued records into a :class:`BatchAccumulator` and sends
+batches that reach the sender as one or more ``sendMessage`` calls, with
+retry/backoff/429 handling inside :meth:`TelegramSender.send_with_retry`.
+Only exceptions raised while processing a batch via
+:meth:`WorkerThread._process_batch` are caught: the error reports to stderr,
+increments ``failed``, and the loop continues; it must never kill the thread.
+Batches that never reach the sender (formatting error, overflow="drop") are
+accounted for without any ``sendMessage`` call.
 """
 
 from __future__ import annotations
@@ -62,27 +64,46 @@ class WorkerThread(threading.Thread):
             self._sender.close()
 
     def _loop(self) -> None:
+        """Run the drain/send cycle until shutdown.
+
+        Failed-count accounting is deliberate:
+        - an exception while processing a batch increments ``failed`` once
+          (the batch, not each record in it);
+        - a partial or failed send — ``SendOutcome(delivered=False)`` from
+          retries exhausted, a permanent failure, or too many consecutive 429
+          waits (``_MAX_RATE_LIMIT_WAITS``) even when the retry budget
+          remains — increments ``failed`` by ``len(batch)``;
+        - overflow="drop" increments ``dropped`` by ``len(batch)``.
+
+        Split batches count as ``sent`` only when every part is delivered;
+        otherwise they count as ``failed`` (conservative: a partially
+        delivered split still flags the batch).
+        """
         while True:
             # Empty batch -> block up to 1s waiting for a record (a quiet
             # handler must not busy-poll); partial batch -> collect until size
-            # or interval, whichever comes first (FR-9). Shutdown flushes any
-            # partial batch first (FR-16 drain), then stops.
+            # or interval, whichever comes first. Shutdown flushes any
+            # partial batch first, then stops.
             batch, shutdown = self._accumulator.collect(self._queue, SHUTDOWN, timeout=1.0)
             if batch:
                 try:
                     self._process_batch(batch)
                 except Exception as exc:  # broad by design, see comment below
                     # A single bad record (format error) must never take the
-                    # worker thread down (ARCHITECTURE.md §4 formatter-failure).
+                    # worker thread down.
                     self._stats.increment("failed")
                     _diagnostics.report(f"failed to send batch: {exc}")
                 finally:
                     for _ in batch:
                         self._queue.task_done()
+                if shutdown:
+                    # Shutdown arrived while draining this batch; stop after
+                    # flushing it instead of looping forever on an empty queue.
+                    return
             elif shutdown:
                 return
             else:
-                # timed out with an empty batch — loop and wait again
+                # timed out with an empty batch; loop and wait again
                 continue
 
     def _process_batch(self, batch: list[LogRecord]) -> None:
@@ -91,23 +112,25 @@ class WorkerThread(threading.Thread):
         Formatting happens once per record, up front, so a formatter that
         raises fails the whole batch before any send attempt (the _loop catch
         increments ``failed`` and the worker keeps running). An oversized batch
-        becomes one or more messages per the ``overflow`` policy (FR-13): split
-        into numbered parts, truncated to one message, or dropped entirely. The
-        batch's records count as ``sent`` only if every part is delivered;
-        otherwise they count as ``failed`` (conservative: a partially delivered
-        split still flags the batch, ARCHITECTURE.md §4).
+        becomes one or more messages per the ``overflow`` policy: split
+        into numbered parts, truncated to one message, or dropped entirely.
+        With ``overflow="split"`` the batch's records count as ``sent`` only
+        if every part is delivered; otherwise they count as ``failed``
+        (conservative: a partially delivered split still flags the batch).
+        With ``overflow="drop"`` the records never reach the sender and
+        increment ``dropped`` instead.
         """
         # Escape each record's text for the parse_mode before joining, so no
-        # stray char in a message/traceback breaks Telegram's parser (FR-18).
+        # stray char in a message/traceback breaks Telegram's parser.
         # Escaping per-record (not the joined blob) keeps the newline separators
-        # literal — they are the separators, not content to escape.
+        # literal; they are the separators, not content to escape.
         lines = [escape(self._format_record(r), self._parse_mode) for r in batch]
         text = "\n".join(lines)
         messages = prepare_messages(
             text, self._overflow, TELEGRAM_MAX_MESSAGE_LENGTH, parse_mode=self._parse_mode
         )
         if not messages:
-            # overflow="drop" on oversized text: nothing goes on the wire (FR-13).
+            # overflow="drop" on oversized text: nothing goes on the wire.
             self._stats.increment("dropped", len(batch))
             _diagnostics.report(
                 f"dropping oversized batch of {len(batch)} record(s) (overflow='drop')"
@@ -124,8 +147,10 @@ class WorkerThread(threading.Thread):
             self._stats.increment("sent", len(batch))
             self._stats.increment("batches_sent")
         else:
-            # Retries exhausted or permanent 4xx on at least one part: the batch
-            # is treated as dropped, so it counts as failed, not sent
-            # (ARCHITECTURE.md §4, FR-12). The sender already reported the cause.
+            # send_with_retry returned delivered=False on at least one part
+            # (retries exhausted, permanent failure, or the consecutive-429
+            # wait cap): the batch is treated as dropped, so it counts as
+            # failed, not sent. The worker's report below is the only record
+            # of the drop.
             self._stats.increment("failed", len(batch))
             _diagnostics.report(f"dropping batch of {len(batch)} record(s) after send failure")

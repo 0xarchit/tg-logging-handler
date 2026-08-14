@@ -1,9 +1,9 @@
-"""BatchAccumulator — size/interval-triggered batching (FR-7/8/9).
+"""BatchAccumulator: size/interval-triggered batching.
 
 The worker thread owns one accumulator per handler. Records are drained from
 the queue into the current batch; the batch is flushed (returned to the caller)
 when either ``batch_size`` records accumulate or ``flush_interval`` seconds
-elapse since the batch became non-empty — whichever comes first (FR-9).
+elapse since the batch became non-empty, whichever comes first.
 
 The flush timer is *inactive while the batch is empty*: a quiet handler must
 not wake its worker every ``flush_interval``. Only the arrival of the first
@@ -24,9 +24,8 @@ __all__ = ["BatchAccumulator"]
 class BatchAccumulator:
     """Collect queued records into batches flushed by size or elapsed time.
 
-    Not thread-safe by design — owned exclusively by the worker thread
-    (ARCHITECTURE.md §3.4). ``now`` is injectable for deterministic tests
-    (TESTING.md §1/§3).
+    Not thread-safe by design; owned exclusively by the worker thread.
+    ``now`` is injectable for deterministic tests.
 
     ``collect`` returns ``(batch, shutdown)``: ``shutdown`` is ``True`` when a
     SHUTDOWN sentinel was seen, in which case any partial batch is flushed
@@ -82,7 +81,7 @@ class BatchAccumulator:
             assert batch_started is not None  # non-empty batch implies started
             remaining = self._flush_interval - (self._now() - batch_started)
             if remaining <= 0:
-                break  # interval elapsed → flush partial batch (FR-8)
+                break  # interval elapsed → flush partial batch
             try:
                 item = record_queue.get(timeout=remaining)
             except queue.Empty:

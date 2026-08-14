@@ -1,6 +1,6 @@
 """Worker-thread resilience: an error on one record must not kill the thread.
 
-Proves the ARCHITECTURE.md §4 formatter-failure and sender-failure rows by
+Proves the formatter-failure and sender-failure resilience rows by
 driving ``WorkerThread`` directly with fakes (no real HTTP, no handler).
 """
 
@@ -9,10 +9,11 @@ from __future__ import annotations
 import logging
 import queue
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 
-from tg_logging_handler.sender import SendOutcome
+from tg_logging_handler.sender import SendOutcome, TelegramSender
 from tg_logging_handler.stats import StatsCollector
 from tg_logging_handler.worker import SHUTDOWN, WorkerThread
 
@@ -85,3 +86,27 @@ def test_worker_closes_sender_on_exit() -> None:
     sender = _FakeSender()
     _run_worker(sender, lambda r: r.getMessage(), [])
     assert sender.closed is True
+
+
+def test_worker_stops_after_flushing_partial_batch_on_shutdown() -> None:
+    # A shutdown sentinel arriving mid-drain (partial batch + sentinel, batch
+    # larger than 1) must make the worker exit right after flushing it, not
+    # loop forever on the now-empty queue.
+    q: queue.Queue[object] = queue.Queue()
+    sender = _FakeSender()
+    stats = StatsCollector()
+    worker = WorkerThread(
+        q,
+        cast(TelegramSender, sender),
+        stats,
+        lambda r: r.getMessage(),
+        batch_size=2,
+        flush_interval=0.01,
+    )
+    worker.start()
+    q.put(_record("one"))
+    q.put(SHUTDOWN)
+    worker.join(timeout=2.0)
+    assert not worker.is_alive()
+    assert sender.sent == ["one"]
+    assert stats.snapshot().sent == 1

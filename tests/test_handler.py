@@ -1,7 +1,4 @@
-"""Handler-level tests: constructor validation, emit contract, close, independence.
-
-Covers FR-1..6, FR-15/16/19/20 and NFR-3/4 from PRD.md.
-"""
+"""Handler-level tests: constructor validation, emit contract, close, independence."""
 
 from __future__ import annotations
 
@@ -42,7 +39,7 @@ def test_public_api_surface() -> None:
         assert name in __all__
 
 
-# --- constructor / config (FR-2, FR-3) ---------------------------------------
+# --- constructor / config ---------------------------------------------------
 
 
 def test_missing_credentials_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -99,7 +96,7 @@ def test_level_kwarg_applied(fast_handler_factory: HandlerFactory) -> None:
     assert handler.level == logging.ERROR
 
 
-# --- emit contract (FR-4, NFR-3, NFR-4) --------------------------------------
+# --- emit contract ----------------------------------------------------------
 
 
 def test_emit_never_blocks_on_slow_network(
@@ -132,7 +129,7 @@ def test_emit_never_raises_on_broken_record(fast_handler_factory: HandlerFactory
     handler.emit(broken)  # must not raise
 
 
-# --- stats (FR-20) -----------------------------------------------------------
+# --- stats -------------------------------------------------------------------
 
 
 def test_stats_returns_immutable_snapshot(fast_handler_factory: HandlerFactory) -> None:
@@ -143,7 +140,7 @@ def test_stats_returns_immutable_snapshot(fast_handler_factory: HandlerFactory) 
         stats.sent = 5  # type: ignore[misc]  # frozen dataclass
 
 
-# --- close (FR-16) -----------------------------------------------------------
+# --- close -------------------------------------------------------------------
 
 
 def test_close_is_idempotent(fast_handler_factory: HandlerFactory) -> None:
@@ -168,7 +165,7 @@ def test_close_drains_queued_records(mock_api: respx.MockRouter) -> None:
     assert handler.stats.sent == 3
 
 
-# --- independence + concurrency (FR-5, FR-6) ---------------------------------
+# --- independence + concurrency ----------------------------------------------
 
 
 def test_two_handlers_are_independent(

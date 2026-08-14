@@ -1,16 +1,16 @@
-"""Queue-full policy implementations (FR-15).
+"""Queue-full policy implementations.
 
 Three behaviors when the bounded queue is at ``queue_maxsize``:
 
-- ``block``       — wait for space (bounded by the caller's willingness to
+- ``block``: wait for space (bounded by the caller's willingness to
   block; documented as a back-pressure choice, not the default).
-- ``drop_newest`` — discard the incoming record (default; the queue keeps the
+- ``drop_newest``: discard the incoming record (default; the queue keeps the
   older, already-accepted records).
-- ``drop_oldest`` — evict the oldest queued record to make room for the new one.
+- ``drop_oldest``: evict the oldest queued record to make room for the new one.
 
 Each policy is a small pure function over a ``queue.Queue`` so it is unit-testable
-against a queue at capacity without spinning up the worker thread
-(CODING_STANDARDS.md §2, TESTING.md §2.1). ``put_drop_oldest`` may itself count a
+against a queue at capacity without spinning up the worker thread.
+``put_drop_oldest`` may itself count a
 drop (the evicted record), so policies return a :class:`PutResult` rather than a
 bare bool.
 """
@@ -34,10 +34,10 @@ __all__ = [
 class PutResult:
     """Outcome of a policy put: whether the new item landed, and how many dropped.
 
-    ``dropped`` is the number of records lost by this call — 0 or 1 for the
-    drop policies (the incoming record, or the evicted oldest one), always 0 for
-    ``block``. The handler adds ``dropped`` to its ``dropped`` counter and, when
-    ``enqueued``, its ``queued`` counter (FR-20).
+    ``dropped`` is the non-negative number of records lost by this call (an
+    incoming record dropped and/or one or more evicted). ``block`` always
+    reports 0. The handler adds ``dropped`` to its ``dropped`` counter and, when
+    ``enqueued``, its ``queued`` counter.
     """
 
     enqueued: bool
@@ -63,10 +63,9 @@ def put_drop_oldest(q: queue.Queue[object], item: object) -> PutResult:
     The eviction + insert is best-effort under concurrency: another producer may
     refill the freed slot first, in which case we retry a bounded number of
     times. Every eviction is counted, and the incoming item is dropped (and
-    counted) only if we cannot insert it at all — so the number of records
-    actually lost from the queue always matches the reported ``dropped`` count
-    (FR-20 accounting). Non-blocking throughout: emit must never block
-    (ARCHITECTURE.md §3.2).
+    counted) only if we cannot insert it at all, so the number of records
+    actually lost from the queue always matches the reported ``dropped`` count.
+    Non-blocking throughout: emit must never block.
     """
     dropped = 0
     for _ in range(_OLDEST_EVICT_ATTEMPTS):

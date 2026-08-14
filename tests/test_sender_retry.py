@@ -1,4 +1,4 @@
-"""TelegramSender retry/backoff/429 logic (FR-10/11/12, ARCHITECTURE.md §4).
+"""TelegramSender retry/backoff/429 logic.
 
 Pure-logic: HTTP is mocked with respx and sleep is injected, so no wall-clock
 time passes. We assert on return values (retry counts), sleep calls (budget vs
@@ -235,7 +235,7 @@ def test_a_5xx_between_429s_resets_the_consecutive_run() -> None:
 
 
 # The distinctive tail of the one-time heads-up body (see TelegramSender._notify_rate_limited).
-_NOTICE_MARKER = "recommend checking this up manually"
+_NOTICE_MARKER = "recommend checking it manually"
 
 
 def _notice_count(route: respx.Route) -> int:
@@ -264,7 +264,7 @@ def test_first_429_sends_one_time_heads_up_notice() -> None:
 
 @respx.mock
 def test_heads_up_notice_is_sent_only_once_across_many_429s() -> None:
-    # A storm of 429s must not spam the chat with a notice per 429 — it is a
+    # A storm of 429s must not spam the chat with a notice per 429; it is a
     # one-time heads-up for the life of the sender.
     route = respx.post(SEND_URL).mock(
         side_effect=[

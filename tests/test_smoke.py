@@ -1,10 +1,10 @@
-"""Smoke test — a real package-usage example, credentials read from the env.
+"""Smoke test: a real package-usage example, credentials read from the env.
 
 Two layers:
 
-* Offline smoke (always runs, incl. CI): the public surface — every export, the
+* Offline smoke (always runs, incl. CI): the public surface (every export, the
   convenience alias, all constructor flags/enums, the fail-fast validation
-  errors, and the stats snapshot — works without touching the network.
+  errors, and the stats snapshot) works without touching the network.
 * Live end-to-end (network): reads ``TG_TOKEN`` / ``TG_CHAT_ID`` and actually
   delivers logs to Telegram, exercising ``validate=True``, batching, the
   ``split`` overflow policy, ``parse_mode`` escaping, tracebacks, and the stats
@@ -42,7 +42,7 @@ requires_live = pytest.mark.skipif(
 
 
 # --------------------------------------------------------------------------- #
-# Offline smoke: public surface, flags, and validation — no network, no env.
+# Offline smoke: public surface, flags, and validation; no network, no env.
 # --------------------------------------------------------------------------- #
 
 
@@ -113,7 +113,7 @@ def test_every_flag_combination_constructs_and_closes(
     overflow: str, parse_mode: str | None, queue_full_policy: str
 ) -> None:
     # Build a handler across the full matrix of enum flags, start its worker,
-    # and close it cleanly — the offline construction path must never raise.
+    # and close it cleanly; the offline construction path must never raise.
     handler = TelegramLoggingHandler(
         token=OFFLINE_TOKEN,
         chat_id=OFFLINE_CHAT,
@@ -132,7 +132,7 @@ def test_every_flag_combination_constructs_and_closes(
         assert isinstance(handler.stats, HandlerStats)
     finally:
         handler.close()
-        handler.close()  # idempotent — a second close is a no-op
+        handler.close()  # idempotent; a second close is a no-op
 
 
 def test_fresh_stats_snapshot_starts_at_zero() -> None:

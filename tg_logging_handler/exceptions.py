@@ -18,7 +18,7 @@ class TelegramSendError(Exception):
     Carries retry classification from the sender back to its retry loop; never
     escapes into application code. ``retryable`` marks transient errors. A
     non-``None`` ``retry_after`` (from a 429) is honored *without* consuming the
-    retry budget (FR-11, ARCHITECTURE.md §4).
+    retry budget.
     """
 
     def __init__(self, message: str, *, retryable: bool, retry_after: float | None = None) -> None:
