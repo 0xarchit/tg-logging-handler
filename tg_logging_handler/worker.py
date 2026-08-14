@@ -61,6 +61,19 @@ class WorkerThread(threading.Thread):
             self._sender.close()
 
     def _loop(self) -> None:
+        """Run the drain/send cycle until shutdown.
+
+        Failed-count accounting is deliberate:
+        - an exception while processing a batch increments ``failed`` once
+          (the batch, not each record in it);
+        - a partial or failed send (retries exhausted or permanent failure)
+          increments ``failed`` by ``len(batch)``;
+        - overflow="drop" increments ``dropped`` by ``len(batch)``.
+
+        Split batches count as ``sent`` only when every part is delivered;
+        otherwise they count as ``failed`` (conservative: a partially
+        delivered split still flags the batch).
+        """
         while True:
             # Empty batch -> block up to 1s waiting for a record (a quiet
             # handler must not busy-poll); partial batch -> collect until size
