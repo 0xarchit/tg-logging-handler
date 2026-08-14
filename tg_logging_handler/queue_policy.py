@@ -34,9 +34,9 @@ __all__ = [
 class PutResult:
     """Outcome of a policy put: whether the new item landed, and how many dropped.
 
-    ``dropped`` is the number of records lost by this call: 0 or 1 for the
-    drop policies (the incoming record, or the evicted oldest one), always 0 for
-    ``block``. The handler adds ``dropped`` to its ``dropped`` counter and, when
+    ``dropped`` is the non-negative number of records lost by this call (an
+    incoming record dropped and/or one or more evicted). ``block`` always
+    reports 0. The handler adds ``dropped`` to its ``dropped`` counter and, when
     ``enqueued``, its ``queued`` counter.
     """
 

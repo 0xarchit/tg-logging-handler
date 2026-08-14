@@ -78,6 +78,10 @@ class WorkerThread(threading.Thread):
                 finally:
                     for _ in batch:
                         self._queue.task_done()
+                if shutdown:
+                    # Shutdown arrived while draining this batch; stop after
+                    # flushing it instead of looping forever on an empty queue.
+                    return
             elif shutdown:
                 return
             else:

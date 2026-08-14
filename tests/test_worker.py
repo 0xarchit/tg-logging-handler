@@ -85,3 +85,22 @@ def test_worker_closes_sender_on_exit() -> None:
     sender = _FakeSender()
     _run_worker(sender, lambda r: r.getMessage(), [])
     assert sender.closed is True
+
+
+def test_worker_stops_after_flushing_partial_batch_on_shutdown() -> None:
+    # A shutdown sentinel arriving mid-drain (partial batch + sentinel, batch
+    # larger than 1) must make the worker exit right after flushing it, not
+    # loop forever on the now-empty queue.
+    q: queue.Queue[object] = queue.Queue()
+    sender = _FakeSender()
+    stats = StatsCollector()
+    worker = WorkerThread(
+        q, sender, stats, lambda r: r.getMessage(), batch_size=2, flush_interval=0.01
+    )  # type: ignore[arg-type]
+    worker.start()
+    q.put(_record("one"))
+    q.put(SHUTDOWN)
+    worker.join(timeout=2.0)
+    assert not worker.is_alive()
+    assert sender.sent == ["one"]
+    assert stats.snapshot().sent == 1

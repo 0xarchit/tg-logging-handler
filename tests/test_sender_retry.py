@@ -235,7 +235,7 @@ def test_a_5xx_between_429s_resets_the_consecutive_run() -> None:
 
 
 # The distinctive tail of the one-time heads-up body (see TelegramSender._notify_rate_limited).
-_NOTICE_MARKER = "recommend checking this up manually"
+_NOTICE_MARKER = "recommend checking it manually"
 
 
 def _notice_count(route: respx.Route) -> int:

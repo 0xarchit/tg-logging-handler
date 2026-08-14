@@ -3,7 +3,7 @@
 Adds retry with exponential backoff + jitter, 429 ``Retry-After``
 handling that does not consume the retry budget, and permanent-4xx
 fail-fast. The client is created lazily inside
-:meth:`TelegramSender.send` so it is bound to the worker thread that uses it,
+:meth:`TelegramSender.send_with_retry` so it is bound to the worker thread that uses it,
 never the constructing thread. ``sleep`` is injectable
 so the backoff math is testable with a fake clock.
 """
@@ -34,9 +34,10 @@ _MAX_RATE_LIMIT_WAITS = 10  # cap consecutive 429 waits so a stuck 429 can't spi
 class SendOutcome:
     """Result of one ``send_with_retry`` call: delivered or not, and retry count.
 
-    ``delivered=False`` means the message was dropped after retries were
-    exhausted (or failed permanently); the worker counts it as ``failed`` so
-    ``sent`` stays accurate.
+    ``delivered=False`` means the message was dropped: after retries were
+    exhausted, after a permanent failure, or after too many consecutive 429
+    waits even when the retry budget remains; the worker counts it as
+    ``failed`` so ``sent`` stays accurate.
     """
 
     delivered: bool
@@ -138,7 +139,7 @@ class TelegramSender:
         text = (
             "tg-logging-handler: a 429 (Too Many Requests) just came back from "
             "the Telegram API. Logs will keep retrying and may keep hitting the "
-            "rate limit; recommend checking this up manually."
+            "rate limit; recommend checking it manually."
         )
         payload = {"chat_id": self._chat_id, "text": text, "disable_web_page_preview": True}
         try:
