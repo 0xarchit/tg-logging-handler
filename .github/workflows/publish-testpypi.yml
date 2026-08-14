@@ -58,13 +58,14 @@ jobs:
           uv venv --python ${{ matrix.python-version }}
           # Pin ==$VERSION so a not-yet-propagated release fails the install and
           # triggers a retry, instead of silently grabbing a stale older version.
-          for i in 1 2 3 4 5; do
+          for i in 1 2 3 4 5 6 7 8 9 10; do
             uv pip install \
               --index-url https://test.pypi.org/simple/ \
               --extra-index-url https://pypi.org/simple/ \
+              --index-strategy unsafe-best-match \
               "tg-logging-handler==$VERSION" && break
-            if [ "$i" = 5 ]; then
-              echo "::error::$VERSION never became installable after 5 attempts"
+            if [ "$i" = 10 ]; then
+              echo "::error::$VERSION never became installable after 10 attempts"
               exit 1
             fi
             echo "Attempt $i: $VERSION not on the index yet, retrying in 30s..."
