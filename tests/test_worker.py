@@ -9,10 +9,11 @@ from __future__ import annotations
 import logging
 import queue
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 
-from tg_logging_handler.sender import SendOutcome
+from tg_logging_handler.sender import SendOutcome, TelegramSender
 from tg_logging_handler.stats import StatsCollector
 from tg_logging_handler.worker import SHUTDOWN, WorkerThread
 
@@ -95,8 +96,13 @@ def test_worker_stops_after_flushing_partial_batch_on_shutdown() -> None:
     sender = _FakeSender()
     stats = StatsCollector()
     worker = WorkerThread(
-        q, sender, stats, lambda r: r.getMessage(), batch_size=2, flush_interval=0.01
-    )  # type: ignore[arg-type]
+        q,
+        cast(TelegramSender, sender),
+        stats,
+        lambda r: r.getMessage(),
+        batch_size=2,
+        flush_interval=0.01,
+    )
     worker.start()
     q.put(_record("one"))
     q.put(SHUTDOWN)
