@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-08-15
+
+### Fixed
+
+- **Worker shutdown could hang**: when shutdown arrived while a batch was
+  being drained, the loop could return to collecting on a permanently-empty
+  queue instead of stopping — it now stops after flushing the in-flight
+  batch (`WorkerThread._loop`).
+- Corrected the mypy typing of the fake sender in the worker shutdown test.
+
+### Changed
+
+- **Code-review pass over comments and docstrings** (PR #3): removed stale
+  references to the deleted `docs/` tree from source and tests, and corrected
+  the docs that drifted from the implementation:
+  - Documented the worker's failed-count accounting explicitly: batch-
+    processing exceptions increment `failed` once, send failures
+    (`SendOutcome(delivered=False)` — retries exhausted, permanent failure,
+    or `_MAX_RATE_LIMIT_WAITS` consecutive 429 waits even when the retry
+    budget remains) increment `failed` by `len(batch)`, and `overflow="drop"`
+    increments `dropped` by `len(batch)`.
+  - Scoped the module docstring's exception-safety claim to the exceptions
+    actually caught (`_process_batch`) and to batches that reach the sender.
+  - Dropped the unsupported "the sender already reported the cause" comment;
+    the sender returns `SendOutcome` and the worker logs the drop.
+- **Docs cleanup**: `docs/` is no longer tracked (kept locally, gitignored);
+  README drops the `docs/` links and the License section and gains the new
+  banner/logo assets.
+- **CI**: publish workflows pin the smoke test to the just-published version
+  so the release never asserts a stale version.
+
 ## [0.1.1] - 2026-08-03
 
 ### Changed
