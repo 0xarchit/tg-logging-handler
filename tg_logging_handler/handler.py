@@ -14,7 +14,7 @@ import queue
 from typing import Literal
 
 from . import queue_policy
-from .config import resolve_credentials, validate_token
+from .config import resolve_credentials, resolve_topic_id, validate_token
 from .sender import TelegramSender
 from .stats import HandlerStats, StatsCollector
 from .worker import SHUTDOWN, WorkerThread
@@ -31,6 +31,9 @@ class TelegramLoggingHandler(logging.Handler):
     Args:
         token: Bot token. Falls back to ``TG_TOKEN``. Raises if neither is set.
         chat_id: Target chat id. Falls back to ``TG_CHAT_ID``. Raises if neither is set.
+        topic_id: Target forum topic id. Falls back to ``TG_TOPIC_ID``. When set
+            and the chat is a forum supergroup, messages go to that topic; when
+            unset they go to the group's General topic.
         level: Minimum level, passed to ``setLevel``. Defaults to ``WARNING``.
         batch_size: Max records per outgoing message (``>= 1``).
         flush_interval: Max seconds a partial batch waits (``>= 0``).
@@ -52,6 +55,7 @@ class TelegramLoggingHandler(logging.Handler):
         token: str | None = None,
         chat_id: str | int | None = None,
         *,
+        topic_id: int | None = None,
         level: int | str = logging.WARNING,
         batch_size: int = 1,
         flush_interval: float = 5.0,
@@ -76,6 +80,7 @@ class TelegramLoggingHandler(logging.Handler):
             raise ValueError("queue_maxsize must be >= 0")
 
         resolved_token, resolved_chat = resolve_credentials(token, chat_id)
+        resolved_topic = resolve_topic_id(topic_id)
         if validate:
             validate_token(resolved_token, api_base_url)
 
@@ -96,6 +101,7 @@ class TelegramLoggingHandler(logging.Handler):
             api_base_url,
             parse_mode=parse_mode,
             max_retries=max_retries,
+            message_thread_id=resolved_topic,
         )
         self._worker = WorkerThread(
             record_queue=self._queue,

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import queue
+from typing import cast
 
 import pytest
 
 from tg_logging_handler import queue_policy
-from tg_logging_handler.config import resolve_credentials
+from tg_logging_handler.config import resolve_credentials, resolve_topic_id
 from tg_logging_handler.exceptions import TelegramConfigError
 from tg_logging_handler.stats import HandlerStats, StatsCollector
 
@@ -71,6 +72,48 @@ class TestResolveCredentials:
         assert "mmmm" not in message  # the middle stays hidden
 
 
+class TestResolveTopicId:
+    def test_explicit_int_passes_through(self) -> None:
+        assert resolve_topic_id(42) == 42
+
+    def test_none_returns_none_without_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("TG_TOPIC_ID", raising=False)
+        assert resolve_topic_id(None) is None
+
+    def test_env_string_is_parsed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TG_TOPIC_ID", "42")
+        assert resolve_topic_id(None) == 42
+
+    def test_explicit_arg_wins_over_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TG_TOPIC_ID", "7")
+        assert resolve_topic_id(42) == 42
+
+    def test_empty_env_is_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TG_TOPIC_ID", "")
+        assert resolve_topic_id(None) is None
+
+    def test_invalid_env_string_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TG_TOPIC_ID", "not-a-number")
+        with pytest.raises(ValueError, match="TG_TOPIC_ID must be an integer"):
+            resolve_topic_id(None)
+
+    @pytest.mark.parametrize("bad", [True, False, 3.5, "42"])
+    def test_non_int_explicit_values_are_rejected(self, bad: object) -> None:
+        # bool is an int subclass, floats compare fine, and str would crash on
+        # the range comparison; all must fail with a clean ValueError.
+        with pytest.raises(ValueError, match="topic_id must be an integer"):
+            resolve_topic_id(bad)  # type: ignore[arg-type]  # deliberate misuse
+
+    def test_rejection_message_names_the_type(self) -> None:
+        with pytest.raises(ValueError, match="got bool"):
+            resolve_topic_id(True)
+
+    def test_non_positive_is_rejected(self) -> None:
+        for bad in (0, -1, -100):
+            with pytest.raises(ValueError, match="positive"):
+                resolve_topic_id(bad)
+
+
 class TestStats:
     def test_initial_snapshot_is_zero(self) -> None:
         assert StatsCollector().snapshot() == HandlerStats()
@@ -94,6 +137,31 @@ class TestStats:
         stats.increment("sent")
         assert before.sent == 0
         assert stats.snapshot().sent == 1
+
+
+class _ScriptedQueue:
+    """Duck-typed stand-in for ``queue.Queue`` with per-call scripted outcomes.
+
+    Only the two methods ``put_drop_oldest`` touches are provided. ``puts``
+    entries: ``"full"`` makes ``put_nowait`` raise ``queue.Full``, anything
+    else succeeds. ``gets`` entries: ``"empty"`` makes ``get_nowait`` raise
+    ``queue.Empty``, anything else returns an evictable item. This lets tests
+    exercise the concurrency-race branches that a real queue can never reach
+    single-threaded.
+    """
+
+    def __init__(self, puts: list[str], gets: list[str]) -> None:
+        self._puts = iter(puts)
+        self._gets = iter(gets)
+
+    def put_nowait(self, item: object) -> None:
+        if next(self._puts) == "full":
+            raise queue.Full
+
+    def get_nowait(self) -> object:
+        if next(self._gets) == "empty":
+            raise queue.Empty
+        return "evicted"
 
 
 class TestQueuePolicy:
@@ -128,6 +196,44 @@ class TestQueuePolicy:
         result = queue_policy.put_drop_oldest(q, 2)
         assert result.enqueued is True
         assert result.dropped == 0
+
+    def test_put_drop_oldest_handles_queue_draining_between_evict_and_retry(
+        self,
+    ) -> None:
+        # Race path: between a failed put and the eviction get, another
+        # producer drains the queue, so get_nowait raises Empty and the loop
+        # must retry instead of crashing. Scripted via a fake queue.
+        fake = cast(
+            "queue.Queue[object]",
+            _ScriptedQueue(puts=["full", "full", "ok"], gets=["empty", "item"]),
+        )
+        result = queue_policy.put_drop_oldest(fake, "new")
+        assert result.enqueued is True
+        assert result.dropped == 1  # one real eviction happened, then room appeared
+
+    def test_put_drop_oldest_gives_up_when_slot_keeps_refilling(self) -> None:
+        # Race path: the freed slot is instantly refilled by a competing
+        # producer on every attempt, so all evictions fail and the incoming
+        # item is dropped (and counted) after the bounded attempt budget.
+        fake = cast(
+            "queue.Queue[object]",
+            _ScriptedQueue(puts=["full", "full", "full", "full"], gets=["item"] * 3),
+        )
+        result = queue_policy.put_drop_oldest(fake, "new")
+        assert result.enqueued is False
+        assert result.dropped == 4  # 3 evicted victims + the incoming record
+
+    def test_put_drop_oldest_lands_item_after_attempt_budget(self) -> None:
+        # Race path: the slot keeps refilling for all three attempts, but the
+        # final (post-budget) put succeeds, so the item lands but the victims
+        # are still counted.
+        fake = cast(
+            "queue.Queue[object]",
+            _ScriptedQueue(puts=["full", "full", "full", "ok"], gets=["item"] * 3),
+        )
+        result = queue_policy.put_drop_oldest(fake, "new")
+        assert result.enqueued is True
+        assert result.dropped == 3
 
     def test_put_block_enqueues(self) -> None:
         q: queue.Queue[object] = queue.Queue(maxsize=1)
