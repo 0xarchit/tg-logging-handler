@@ -105,6 +105,7 @@ def test_429_honors_retry_after_without_consuming_budget() -> None:
     outcome = _sender(sleep, max_retries=1).send_with_retry("hi")
     assert outcome.delivered is True
     assert outcome.retries == 0  # 429s do not consume the retry budget
+    assert outcome.rate_limited == 2  # both Retry-After waits still counted
     assert sleep.calls == [7.0, 3.0]  # slept exactly the Retry-After values
 
 
@@ -197,6 +198,7 @@ def test_429_waits_are_capped_so_a_stuck_429_cannot_spin_forever() -> None:
     outcome = _sender(sleep).send_with_retry("hi")
     assert outcome.delivered is False  # gave up after the cap
     assert outcome.retries == 0  # 429s never consume the retry budget
+    assert outcome.rate_limited == _MAX_RATE_LIMIT_WAITS  # every wait counted
     assert len(sleep.calls) == _MAX_RATE_LIMIT_WAITS  # slept exactly cap times
     assert sleep.calls == [1.0] * _MAX_RATE_LIMIT_WAITS
 
@@ -354,3 +356,17 @@ def test_heads_up_notice_failure_is_swallowed() -> None:
     outcome = _sender(sleep).send_with_retry("real log line")
     assert outcome.delivered is True
     assert route.call_count == 3  # send, failed notice, successful resend
+
+
+@respx.mock
+def test_3xx_is_a_permanent_failure_not_success() -> None:
+    # Regression: a 3xx (e.g. a proxy redirect that is not followed) used to
+    # fall through every branch and return delivered=True while nothing was
+    # sent. It must count as failed and consume no retries.
+    route = respx.post(SEND_URL).mock(return_value=httpx.Response(302))
+    sleep = _RecordingSleep()
+    outcome = _sender(sleep).send_with_retry("hi")
+    assert outcome.delivered is False
+    assert outcome.retries == 0
+    assert route.call_count == 1
+    assert sleep.calls == []

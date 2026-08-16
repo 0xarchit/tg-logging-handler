@@ -97,10 +97,12 @@ def test_burst_of_100_is_batched(
         logger.error("msg-%d", i)
     route = next(r for r in mock_api.routes if "sendMessage" in str(r.pattern))
     assert wait_for(lambda: route.call_count == 10)
+    # Counters update right after the wire call, so wait for the final count
+    # instead of reading stats in the same instant as the 10th call.
+    assert wait_for(lambda: handler.stats.sent == 100)
     logger.handlers.clear()
 
     # Every record delivered, none lost, and each wire message carries 10 lines.
-    assert handler.stats.sent == 100
     assert handler.stats.batches_sent == 10
     assert all(text.count("\n") == 9 for text in _batch_texts(route))
 
