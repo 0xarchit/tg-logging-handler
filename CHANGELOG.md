@@ -6,12 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.1.4] - 2026-08-17
+
 ### Added
+
 - New `rate_limited` counter in `HandlerStats`: 429 `Retry-After` waits are
   now counted even though they never consume the retry budget, so a
   rate-limit storm shows up in the stats instead of reporting zero retries.
 
 ### Fixed
+
 - Failed handler construction no longer leaves a half-built handler registered
   with the logging module. Previously, exit-time `logging.shutdown()` called
   `close()` on the half-built instance and printed a stray `AttributeError`
@@ -39,12 +42,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs only after a capped wait elapsed with nothing arriving, so records that
   keep flowing still group into one batch even when `close()` was called during
   the drain (previously every remaining record flushed as its own message).
-- A non-200 `sendMessage` response (e.g. a 3xx that survives
-  redirect-following) is no longer reported as delivered; getMe validation
+- A non-200 `sendMessage` response (a 3xx — redirects are never followed — or
+  a non-200 2xx) is no longer reported as delivered; getMe validation
   maps non-JSON 200 bodies to `TelegramConfigError` instead of a bare
   `ValueError`; env `TG_CHAT_ID` trailing whitespace is stripped like the
   token's; queue `task_done` accounting is now exact, so `queue.join()` can
   no longer hang.
+- `close()` now enqueues the shutdown sentinel **before** signaling the
+  worker, so the worker can never exit while the sentinel is still about to be
+  queued and strand it in the queue (a user's `queue.join()` would hang).
+- getMe validation requires an object body with `ok == True` exactly: a
+  scalar/list JSON body or a merely truthy `ok` (e.g. `1`) maps to
+  `TelegramConfigError` instead of a raw `AttributeError` or a false accept.
+- The clamped truncation marker is nudged off a trailing backslash, so a tiny
+  `max_length` with MarkdownV2 can never leave a dangling escape pair.
+- HTTP redirects are disabled on the send client: a 302/308 with a `Location`
+  is never followed, so a redirected `sendMessage` request can never be
+  mistaken for a delivery.
 
 ## [0.1.3] - 2026-08-16
 

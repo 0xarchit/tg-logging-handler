@@ -205,6 +205,39 @@ class TestValidateToken:
         with pytest.raises(TelegramConfigError, match="Could not reach Telegram"):
             validate_token("111:abc", "https://api.telegram.org")
 
+    @pytest.mark.parametrize("payload", [[], "hello", 42])
+    def test_non_object_json_200_body_is_config_error(
+        self, monkeypatch: pytest.MonkeyPatch, payload: object
+    ) -> None:
+        # A 200 that decodes as a scalar/list (never an object) cannot carry
+        # ok; it must hit the TelegramConfigError path, not an AttributeError.
+        import httpx
+
+        from tg_logging_handler.config import validate_token
+
+        monkeypatch.setattr(
+            httpx,
+            "get",
+            lambda *args, **kwargs: httpx.Response(200, json=payload),  # type: ignore[arg-type]
+        )
+        with pytest.raises(TelegramConfigError, match="rejected"):
+            validate_token("111:abc", "https://api.telegram.org")
+
+    def test_truthy_but_not_true_ok_is_config_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # ok == 1 is truthy but not exactly True; only a boolean True means
+        # the token was accepted.
+        import httpx
+
+        from tg_logging_handler.config import validate_token
+
+        monkeypatch.setattr(
+            httpx,
+            "get",
+            lambda *args, **kwargs: httpx.Response(200, json={"ok": 1}),
+        )
+        with pytest.raises(TelegramConfigError, match="rejected"):
+            validate_token("111:abc", "https://api.telegram.org")
+
 
 class TestQueuePolicy:
     def test_put_drop_newest_succeeds_when_space(self) -> None:

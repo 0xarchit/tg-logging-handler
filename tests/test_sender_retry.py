@@ -360,13 +360,34 @@ def test_heads_up_notice_failure_is_swallowed() -> None:
 
 @respx.mock
 def test_3xx_is_a_permanent_failure_not_success() -> None:
-    # Regression: a 3xx (e.g. a proxy redirect that is not followed) used to
-    # fall through every branch and return delivered=True while nothing was
-    # sent. It must count as failed and consume no retries.
+    # Regression: a 3xx (e.g. a proxy redirect) used to fall through every
+    # branch and return delivered=True while nothing was sent. It must count
+    # as failed and consume no retries.
     route = respx.post(SEND_URL).mock(return_value=httpx.Response(302))
     sleep = _RecordingSleep()
     outcome = _sender(sleep).send_with_retry("hi")
     assert outcome.delivered is False
     assert outcome.retries == 0
     assert route.call_count == 1
+    assert sleep.calls == []
+
+
+@respx.mock
+def test_redirect_with_location_is_never_followed() -> None:
+    # Redirects are disabled on the client: a 302 carrying a Location must
+    # surface as-is and fail — the redirect target must never receive the
+    # sendMessage POST, and its (hypothetical 200) response must never be
+    # mistaken for a delivery.
+    redirect_target = respx.get("https://evil.example/hijack").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 9}})
+    )
+    route = respx.post(SEND_URL).mock(
+        return_value=httpx.Response(302, headers={"location": "https://evil.example/hijack"})
+    )
+    sleep = _RecordingSleep()
+    outcome = _sender(sleep).send_with_retry("hi")
+    assert outcome.delivered is False
+    assert outcome.retries == 0
+    assert route.call_count == 1  # one POST, never re-issued against the target
+    assert redirect_target.call_count == 0  # the Location was never fetched
     assert sleep.calls == []

@@ -123,7 +123,7 @@ def validate_token(token: str, api_base_url: str) -> None:
         ) from exc
 
     try:
-        body_ok = response.json().get("ok", False)
+        body = response.json()
     except ValueError as exc:
         # A proxy/gateway error page behind a 200 must not surface as a bare
         # ValueError; the user is promised TelegramConfigError.
@@ -132,6 +132,9 @@ def validate_token(token: str, api_base_url: str) -> None:
             "Check that the bot token is correct."
         ) from exc
 
+    # The body must be an object with ok == True exactly: a scalar/list body
+    # or a merely truthy ok (1, "true") means the token was not accepted.
+    body_ok = isinstance(body, dict) and body.get("ok") is True
     if response.status_code != 200 or not body_ok:
         raise TelegramConfigError(
             f"Telegram rejected the token (getMe returned HTTP {response.status_code}). "

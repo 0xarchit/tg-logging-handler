@@ -192,11 +192,15 @@ class TelegramLoggingHandler(logging.Handler):
             # Signal stop twice: the event is authoritative (the sentinel below
             # is only a wakeup and can be lost to a saturated queue or
             # drop_oldest eviction); the worker drains everything queued first,
-            # then exits. The join below runs outside the lock so an emit
-            # blocked on a full queue (block policy) can finish draining.
-            self._worker.shutdown()
+            # then exits. The sentinel goes in BEFORE the event: the worker's
+            # exit check is "event set AND queue empty", so signaling first
+            # would let it exit while the sentinel is still about to be
+            # enqueued, stranding it in a queue nobody drains (queue.join()
+            # would hang forever). The join below runs outside the lock so an
+            # emit blocked on a full queue (block policy) can finish draining.
             with contextlib.suppress(queue.Full):
                 self._queue.put_nowait(SHUTDOWN)
+            self._worker.shutdown()
         self._worker.join(timeout=self._shutdown_timeout)
         atexit.unregister(self.close)
         super().close()

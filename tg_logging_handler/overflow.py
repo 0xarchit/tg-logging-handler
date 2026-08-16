@@ -79,8 +79,11 @@ def truncate_text(text: str, max_length: int, parse_mode: str | None = None) -> 
     marker = escape(_TRUNCATION_MARKER, parse_mode)
     # A pathological max_length smaller than the marker itself must still
     # yield a result within the cap (Telegram would 400 an oversized body);
-    # clamp the marker, then keep the remainder of the budget for text.
+    # clamp the marker, then keep the remainder of the budget for text. The
+    # clamped marker is nudged off a trailing backslash so a MarkdownV2 \X
+    # pair is never split (a dangling backslash 400s the send).
     marker = marker[:max_length]
+    marker = marker[: _safe_cut(marker, len(marker))]
     keep = _safe_cut(text, max(max_length - len(marker), 0))
     return text[:keep] + marker
 

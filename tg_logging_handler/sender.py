@@ -83,7 +83,9 @@ class TelegramSender:
         """Return the worker-thread-local client, creating it on first use."""
         if self._client is None:
             timeout = httpx.Timeout(DEFAULT_READ_TIMEOUT, connect=DEFAULT_CONNECT_TIMEOUT)
-            self._client = httpx.Client(timeout=timeout, follow_redirects=True)
+            # Redirects stay disabled (httpx default): a 302/308 with a
+            # Location must surface as-is and fail, never be followed.
+            self._client = httpx.Client(timeout=timeout)
         return self._client
 
     def send_with_retry(self, text: str) -> SendOutcome:
@@ -213,8 +215,8 @@ class TelegramSender:
                 f"server error {response.status_code}: {response.text}", retryable=True
             )
         if response.status_code != 200:
-            # Anything else (a 3xx that survived redirect-following, or a
-            # non-200 2xx) means nothing was delivered; never report success.
+            # Anything else — a 3xx (redirects are never followed), or a
+            # non-200 2xx — means nothing was delivered; never report success.
             raise TelegramSendError(
                 f"unexpected status {response.status_code}: {response.text}",
                 retryable=False,

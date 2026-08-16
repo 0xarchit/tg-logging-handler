@@ -397,8 +397,60 @@ def test_emit_racing_close_drops_instead_of_orphaning(
     emitter = threading.Thread(target=handler.emit, args=(slow_record,))
     emitter.start()
     time.sleep(0.1)  # emit is now inside getMessage, before the lock
-    handler._closed = True  # close() completed while the emit was in flight
+    handler.close()  # real close(): the emit is mid-flight past its snapshot
     release.set()
     emitter.join(timeout=2.0)
     assert handler.stats.dropped == 1  # counted, not orphaned
     handler.close()  # idempotent no-op
+
+
+def test_close_enqueues_sentinel_before_signaling_worker_shutdown(
+    fast_handler_factory: HandlerFactory,
+) -> None:
+    # close() must put the SHUTDOWN sentinel before setting the shutdown event:
+    # the worker's exit check is "event set AND queue empty", so signaling
+    # first would let it return while the sentinel is still about to be
+    # enqueued, stranding it in a queue nobody drains (queue.join() hangs).
+    handler = fast_handler_factory()
+    order: list[str] = []
+
+    worker = handler._worker
+    orig_shutdown = worker.shutdown
+
+    def spy_shutdown() -> None:
+        order.append("event")
+        orig_shutdown()
+
+    worker.shutdown = spy_shutdown  # type: ignore[method-assign]
+
+    q = handler._queue
+    orig_put = q.put_nowait
+
+    def spy_put(item: object) -> None:
+        order.append("sentinel")
+        orig_put(item)
+
+    q.put_nowait = spy_put  # type: ignore[method-assign]
+
+    handler.close()
+    assert order == ["sentinel", "event"]  # sentinel queued before the wakeup
+
+
+def test_close_with_empty_queue_strands_nothing(
+    fast_handler_factory: HandlerFactory,
+) -> None:
+    # With nothing queued, close() must still leave the queue joinable: the
+    # sentinel is either consumed by the worker or never enqueued after an
+    # exit, so queue.join() always completes.
+    handler = fast_handler_factory()
+    handler.close()
+    done = threading.Event()
+
+    def join() -> None:
+        handler._queue.join()
+        done.set()
+
+    joiner = threading.Thread(target=join)
+    joiner.start()
+    joiner.join(timeout=2.0)
+    assert done.is_set()  # join() completed; no stranded sentinel
