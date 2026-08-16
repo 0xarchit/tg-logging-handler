@@ -218,7 +218,7 @@ class TestValidateToken:
         monkeypatch.setattr(
             httpx,
             "get",
-            lambda *args, **kwargs: httpx.Response(200, json=payload),  # type: ignore[arg-type]
+            lambda *args, **kwargs: httpx.Response(200, json=payload),
         )
         with pytest.raises(TelegramConfigError, match="rejected"):
             validate_token("111:abc", "https://api.telegram.org")
