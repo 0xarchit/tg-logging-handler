@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tg-logging-handler"
-version = "0.1.3"
+version = "0.1.4"
 description = "Production-grade Telegram destination for Python's standard logging module"
 readme = "README.md"
 requires-python = ">=3.10"
