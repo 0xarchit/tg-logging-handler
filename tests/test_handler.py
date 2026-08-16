@@ -96,6 +96,58 @@ def test_level_kwarg_applied(fast_handler_factory: HandlerFactory) -> None:
     assert handler.level == logging.ERROR
 
 
+def test_topic_id_validation_raises() -> None:
+    for bad in (0, -1, -100):
+        with pytest.raises(ValueError):
+            TelegramLoggingHandler(
+                token=TEST_TOKEN, chat_id=TEST_CHAT_ID, validate=False, topic_id=bad
+            )
+
+
+def test_topic_id_none_is_allowed(fast_handler_factory: HandlerFactory) -> None:
+    handler = fast_handler_factory(topic_id=None)  # None is allowed
+    handler.close()
+
+
+def test_topic_id_from_env_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TG_TOPIC_ID", "42")
+    handler = TelegramLoggingHandler(
+        token=TEST_TOKEN, chat_id=TEST_CHAT_ID, validate=False, api_base_url=API_BASE
+    )
+    assert handler._sender._message_thread_id == 42
+    handler.close()
+
+
+def test_topic_id_arg_wins_over_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TG_TOPIC_ID", "7")
+    handler = TelegramLoggingHandler(
+        token=TEST_TOKEN, chat_id=TEST_CHAT_ID, validate=False, topic_id=42, api_base_url=API_BASE
+    )
+    assert handler._sender._message_thread_id == 42
+    handler.close()
+
+
+def test_topic_id_invalid_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TG_TOPIC_ID", "not-a-number")
+    with pytest.raises(ValueError):
+        TelegramLoggingHandler(
+            token=TEST_TOKEN, chat_id=TEST_CHAT_ID, validate=False, api_base_url=API_BASE
+        )
+
+
+def test_topic_id_reaches_the_wire(
+    fast_handler_factory: HandlerFactory, mock_api: respx.MockRouter, wait_for: WaitFor
+) -> None:
+    import json
+
+    handler = fast_handler_factory(topic_id=42)
+    handler.emit(_record("topic log"))
+    assert wait_for(lambda: handler.stats.sent == 1)
+    route = next(r for r in mock_api.routes if "sendMessage" in str(r.pattern))
+    body = json.loads(route.calls[0].request.content.decode())
+    assert body["message_thread_id"] == 42
+
+
 # --- emit contract ----------------------------------------------------------
 
 

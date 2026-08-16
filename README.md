@@ -67,6 +67,7 @@ All constructor arguments after `token` / `chat_id` are keyword-only.
 |---|---|---|
 | `token` | `None` | Bot token; falls back to `TG_TOKEN`. |
 | `chat_id` | `None` | Target chat; falls back to `TG_CHAT_ID`. |
+| `topic_id` | `None` | Forum topic id; falls back to `TG_TOPIC_ID`. When set on a forum supergroup, messages go to that topic; when unset, to the group's General topic. |
 | `level` | `logging.WARNING` | Minimum level (passed to `setLevel`). |
 | `batch_size` | `1` | Max records per message (`>= 1`). `1` = send each record immediately. |
 | `flush_interval` | `5.0` | Max seconds a partial batch waits (`>= 0`). |
@@ -85,6 +86,7 @@ All constructor arguments after `token` / `chat_id` are keyword-only.
 |---|---|
 | `TG_TOKEN` | `token` argument is omitted. |
 | `TG_CHAT_ID` | `chat_id` argument is omitted. |
+| `TG_TOPIC_ID` | `topic_id` argument is omitted. |
 
 ## Batching
 

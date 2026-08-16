@@ -130,6 +130,64 @@ def test_parse_mode_included_when_set() -> None:
 
 
 @respx.mock
+def test_message_thread_id_included_when_set() -> None:
+    route = respx.post(SEND_URL).mock(return_value=_ok())
+    sleep = _RecordingSleep()
+    sender = TelegramSender(TOKEN, CHAT, API_BASE, message_thread_id=42, sleep=sleep)
+    sender.send_with_retry("hi")
+    body = json.loads(route.calls[0].request.content.decode())
+    assert body["message_thread_id"] == 42
+
+
+@respx.mock
+def test_message_thread_id_omitted_when_not_set() -> None:
+    route = respx.post(SEND_URL).mock(return_value=_ok())
+    sleep = _RecordingSleep()
+    _sender(sleep).send_with_retry("hi")
+    body = json.loads(route.calls[0].request.content.decode())
+    assert "message_thread_id" not in body  # backward compatible: no topic field
+
+
+@respx.mock
+def test_thread_not_found_400_is_a_permanent_failure() -> None:
+    # Wrong or closed topic id: Telegram answers "message thread not found".
+    # It is a permanent 4xx, so it must not be retried and must count as failed.
+    route = respx.post(SEND_URL).mock(
+        return_value=httpx.Response(400, text="Bad Request: message thread not found")
+    )
+    sleep = _RecordingSleep()
+    outcome = TelegramSender(
+        TOKEN, CHAT, API_BASE, message_thread_id=999, sleep=sleep
+    ).send_with_retry("hi")
+    assert outcome.delivered is False
+    assert outcome.retries == 0
+    assert route.call_count == 1
+    assert sleep.calls == []
+
+
+@respx.mock
+def test_429_heads_up_notice_targets_the_topic() -> None:
+    # The one-time 429 notice must land in the same topic as the logs, not
+    # fall back to the General topic.
+    route = respx.post(SEND_URL).mock(
+        side_effect=[
+            httpx.Response(429, headers={"retry-after": "1"}),
+            _ok(),  # the heads-up notice POST
+            _ok(),  # the retried original message
+        ]
+    )
+    sleep = _RecordingSleep()
+    sender = TelegramSender(TOKEN, CHAT, API_BASE, message_thread_id=42, sleep=sleep)
+    outcome = sender.send_with_retry("real log line")
+    assert outcome.delivered is True
+    notice = [
+        c for c in route.calls if _NOTICE_MARKER in json.loads(c.request.content.decode())["text"]
+    ]
+    assert len(notice) == 1
+    assert json.loads(notice[0].request.content.decode())["message_thread_id"] == 42
+
+
+@respx.mock
 def test_429_waits_are_capped_so_a_stuck_429_cannot_spin_forever() -> None:
     # 11 consecutive 429s (cap is 10) must give up, not loop forever.
     from tg_logging_handler.sender import _MAX_RATE_LIMIT_WAITS

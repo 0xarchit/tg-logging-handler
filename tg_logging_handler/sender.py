@@ -59,12 +59,14 @@ class TelegramSender:
         api_base_url: str,
         parse_mode: str | None = None,
         max_retries: int = 3,
+        message_thread_id: int | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._url = f"{api_base_url}/bot{token}/sendMessage"
         self._chat_id = chat_id
         self._parse_mode = parse_mode
         self._max_retries = max_retries
+        self._message_thread_id = message_thread_id
         self._sleep = sleep
         self._client: httpx.Client | None = None
         # One-time heads-up when rate limiting first starts, so a 429 storm does
@@ -142,6 +144,8 @@ class TelegramSender:
             "rate limit; recommend checking it manually."
         )
         payload = {"chat_id": self._chat_id, "text": text, "disable_web_page_preview": True}
+        if self._message_thread_id is not None:
+            payload["message_thread_id"] = self._message_thread_id
         try:
             self._get_client().post(self._url, json=payload)
         except httpx.HTTPError as exc:
@@ -159,6 +163,8 @@ class TelegramSender:
             "text": text,
             "disable_web_page_preview": True,
         }
+        if self._message_thread_id is not None:
+            payload["message_thread_id"] = self._message_thread_id
         if self._parse_mode is not None:
             payload["parse_mode"] = self._parse_mode
 

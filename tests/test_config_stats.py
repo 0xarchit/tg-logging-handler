@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import queue
+from typing import cast
 
 import pytest
 
@@ -96,6 +97,31 @@ class TestStats:
         assert stats.snapshot().sent == 1
 
 
+class _ScriptedQueue:
+    """Duck-typed stand-in for ``queue.Queue`` with per-call scripted outcomes.
+
+    Only the two methods ``put_drop_oldest`` touches are provided. ``puts``
+    entries: ``"full"`` makes ``put_nowait`` raise ``queue.Full``, anything
+    else succeeds. ``gets`` entries: ``"empty"`` makes ``get_nowait`` raise
+    ``queue.Empty``, anything else returns an evictable item. This lets tests
+    exercise the concurrency-race branches that a real queue can never reach
+    single-threaded.
+    """
+
+    def __init__(self, puts: list[str], gets: list[str]) -> None:
+        self._puts = iter(puts)
+        self._gets = iter(gets)
+
+    def put_nowait(self, item: object) -> None:
+        if next(self._puts) == "full":
+            raise queue.Full
+
+    def get_nowait(self) -> object:
+        if next(self._gets) == "empty":
+            raise queue.Empty
+        return "evicted"
+
+
 class TestQueuePolicy:
     def test_put_drop_newest_succeeds_when_space(self) -> None:
         q: queue.Queue[object] = queue.Queue(maxsize=1)
@@ -128,6 +154,44 @@ class TestQueuePolicy:
         result = queue_policy.put_drop_oldest(q, 2)
         assert result.enqueued is True
         assert result.dropped == 0
+
+    def test_put_drop_oldest_handles_queue_draining_between_evict_and_retry(
+        self,
+    ) -> None:
+        # Race path: between a failed put and the eviction get, another
+        # producer drains the queue, so get_nowait raises Empty and the loop
+        # must retry instead of crashing. Scripted via a fake queue.
+        fake = cast(
+            "queue.Queue[object]",
+            _ScriptedQueue(puts=["full", "full", "ok"], gets=["empty", "item"]),
+        )
+        result = queue_policy.put_drop_oldest(fake, "new")
+        assert result.enqueued is True
+        assert result.dropped == 1  # one real eviction happened, then room appeared
+
+    def test_put_drop_oldest_gives_up_when_slot_keeps_refilling(self) -> None:
+        # Race path: the freed slot is instantly refilled by a competing
+        # producer on every attempt, so all evictions fail and the incoming
+        # item is dropped (and counted) after the bounded attempt budget.
+        fake = cast(
+            "queue.Queue[object]",
+            _ScriptedQueue(puts=["full", "full", "full", "full"], gets=["item"] * 3),
+        )
+        result = queue_policy.put_drop_oldest(fake, "new")
+        assert result.enqueued is False
+        assert result.dropped == 4  # 3 evicted victims + the incoming record
+
+    def test_put_drop_oldest_lands_item_after_attempt_budget(self) -> None:
+        # Race path: the slot keeps refilling for all three attempts, but the
+        # final (post-budget) put succeeds, so the item lands but the victims
+        # are still counted.
+        fake = cast(
+            "queue.Queue[object]",
+            _ScriptedQueue(puts=["full", "full", "full", "ok"], gets=["item"] * 3),
+        )
+        result = queue_policy.put_drop_oldest(fake, "new")
+        assert result.enqueued is True
+        assert result.dropped == 3
 
     def test_put_block_enqueues(self) -> None:
         q: queue.Queue[object] = queue.Queue(maxsize=1)

@@ -10,7 +10,7 @@ import httpx
 from ._constants import DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT
 from .exceptions import TelegramConfigError
 
-__all__ = ["resolve_credentials", "validate_token"]
+__all__ = ["resolve_credentials", "resolve_topic_id", "validate_token"]
 
 
 def resolve_credentials(
@@ -49,6 +49,34 @@ def resolve_credentials(
         )
 
     return token, str(resolved_chat)
+
+
+def resolve_topic_id(topic_id: int | None) -> int | None:
+    """Resolve the forum topic id from args, falling back to ``TG_TOPIC_ID``.
+
+    Args:
+        topic_id: Explicit topic id, or ``None`` to read ``TG_TOPIC_ID``.
+
+    Returns:
+        A positive ``int`` topic id, or ``None`` when neither is set
+        (messages then go to the group's General topic).
+
+    Raises:
+        ValueError: If the value is not an integer or not positive.
+    """
+    if topic_id is not None:
+        value = topic_id
+    else:
+        raw = os.environ.get("TG_TOPIC_ID")
+        if raw is None or raw == "":
+            return None
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ValueError(f"TG_TOPIC_ID must be an integer, got {raw!r}") from exc
+    if value < 1:
+        raise ValueError("topic_id must be a positive integer")
+    return value
 
 
 def _looks_like_bot_token(token: str) -> bool:
