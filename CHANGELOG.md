@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-08-16
+
+### Added
+
+- **Forum topic support.** New `topic_id` argument (keyword-only, defaults to
+  `None`) and `TG_TOPIC_ID` environment variable. When set and the target is a
+  group with topics enabled (or a forum supergroup), every message goes to that
+  topic via the Bot API `message_thread_id` field; when unset, payloads are
+  unchanged and messages go to the group directly (or the General topic). The
+  one-time 429 heads-up notice is posted into the same topic, never General.
+  Backward compatible: existing handlers need no changes.
+- Runtime type check for `topic_id`: explicit non-integer values (`bool`,
+  `float`, `str`) are rejected with `ValueError` at construction instead of
+  passing through and failing later or corrupting the payload.
+
 ## [0.1.2] - 2026-08-15
 
 ### Fixed
