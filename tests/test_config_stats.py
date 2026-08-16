@@ -8,7 +8,7 @@ from typing import cast
 import pytest
 
 from tg_logging_handler import queue_policy
-from tg_logging_handler.config import resolve_credentials
+from tg_logging_handler.config import resolve_credentials, resolve_topic_id
 from tg_logging_handler.exceptions import TelegramConfigError
 from tg_logging_handler.stats import HandlerStats, StatsCollector
 
@@ -70,6 +70,48 @@ class TestResolveCredentials:
         message = str(excinfo.value)
         assert "AAAA" in message and "ZZZZ" in message  # ends shown
         assert "mmmm" not in message  # the middle stays hidden
+
+
+class TestResolveTopicId:
+    def test_explicit_int_passes_through(self) -> None:
+        assert resolve_topic_id(42) == 42
+
+    def test_none_returns_none_without_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("TG_TOPIC_ID", raising=False)
+        assert resolve_topic_id(None) is None
+
+    def test_env_string_is_parsed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TG_TOPIC_ID", "42")
+        assert resolve_topic_id(None) == 42
+
+    def test_explicit_arg_wins_over_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TG_TOPIC_ID", "7")
+        assert resolve_topic_id(42) == 42
+
+    def test_empty_env_is_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TG_TOPIC_ID", "")
+        assert resolve_topic_id(None) is None
+
+    def test_invalid_env_string_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TG_TOPIC_ID", "not-a-number")
+        with pytest.raises(ValueError, match="TG_TOPIC_ID must be an integer"):
+            resolve_topic_id(None)
+
+    @pytest.mark.parametrize("bad", [True, False, 3.5, "42"])
+    def test_non_int_explicit_values_are_rejected(self, bad: object) -> None:
+        # bool is an int subclass, floats compare fine, and str would crash on
+        # the range comparison; all must fail with a clean ValueError.
+        with pytest.raises(ValueError, match="topic_id must be an integer"):
+            resolve_topic_id(bad)  # type: ignore[arg-type]  # deliberate misuse
+
+    def test_rejection_message_names_the_type(self) -> None:
+        with pytest.raises(ValueError, match="got bool"):
+            resolve_topic_id(True)
+
+    def test_non_positive_is_rejected(self) -> None:
+        for bad in (0, -1, -100):
+            with pytest.raises(ValueError, match="positive"):
+                resolve_topic_id(bad)
 
 
 class TestStats:

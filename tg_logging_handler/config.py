@@ -65,6 +65,11 @@ def resolve_topic_id(topic_id: int | None) -> int | None:
         ValueError: If the value is not an integer or not positive.
     """
     if topic_id is not None:
+        if type(topic_id) is not int:
+            # bool is an int subclass and floats compare fine, but both are
+            # always mistakes here; anything else (e.g. str) would crash on
+            # the range comparison below. Reject non-ints up front.
+            raise ValueError(f"topic_id must be an integer, got {type(topic_id).__name__}")
         value = topic_id
     else:
         raw = os.environ.get("TG_TOPIC_ID")
