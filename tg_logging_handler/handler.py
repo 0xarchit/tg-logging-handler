@@ -11,7 +11,8 @@ import contextlib
 import copy
 import logging
 import queue
-from typing import Literal
+import threading
+from typing import Any, Literal, cast
 
 from . import queue_policy
 from .config import resolve_credentials, resolve_topic_id, validate_token
@@ -70,64 +71,98 @@ class TelegramLoggingHandler(logging.Handler):
     ) -> None:
         super().__init__(level=level)
 
-        if batch_size < 1:
-            raise ValueError("batch_size must be >= 1")
-        if flush_interval < 0:
-            raise ValueError("flush_interval must be >= 0")
-        if max_retries < 0:
-            raise ValueError("max_retries must be >= 0")
-        if queue_maxsize < 0:
-            raise ValueError("queue_maxsize must be >= 0")
+        try:
+            if batch_size < 1:
+                raise ValueError("batch_size must be >= 1")
+            if flush_interval < 0:
+                raise ValueError("flush_interval must be >= 0")
+            if max_retries < 0:
+                raise ValueError("max_retries must be >= 0")
+            if queue_maxsize < 0:
+                raise ValueError("queue_maxsize must be >= 0")
 
-        resolved_token, resolved_chat = resolve_credentials(token, chat_id)
-        resolved_topic = resolve_topic_id(topic_id)
-        if validate:
-            validate_token(resolved_token, api_base_url)
+            resolved_token, resolved_chat = resolve_credentials(token, chat_id)
+            resolved_topic = resolve_topic_id(topic_id)
+            if validate:
+                validate_token(resolved_token, api_base_url)
 
-        # Full signature is live: batching + retry/backoff/429, overflow +
-        # queue policies + full stats, parse_mode escaping. The worker
-        # escapes each record for parse_mode; the sender forwards parse_mode to
-        # sendMessage so Telegram renders the (now-safe) entities.
-        self._shutdown_timeout = shutdown_timeout
-        self._closed = False
-        self._stats = StatsCollector()
-        self._queue: queue.Queue[object] = queue.Queue(maxsize=queue_maxsize)
-        # Validate the policy name now so a typo fails fast at construction, not
-        # silently at the first queue overflow.
-        self._put_policy = queue_policy.select_put_policy(queue_full_policy)
-        self._sender = TelegramSender(
-            resolved_token,
-            resolved_chat,
-            api_base_url,
-            parse_mode=parse_mode,
-            max_retries=max_retries,
-            message_thread_id=resolved_topic,
-        )
-        self._worker = WorkerThread(
-            record_queue=self._queue,
-            sender=self._sender,
-            stats=self._stats,
-            format_record=self.format,
-            batch_size=batch_size,
-            flush_interval=flush_interval,
-            overflow=overflow,
-            parse_mode=parse_mode,
-        )
-        self._worker.start()
-        atexit.register(self.close)
+            # Full signature is live: batching + retry/backoff/429, overflow +
+            # queue policies + full stats, parse_mode escaping. The worker
+            # escapes each record for parse_mode; the sender forwards parse_mode
+            # to sendMessage so Telegram renders the (now-safe) entities.
+            self._shutdown_timeout = shutdown_timeout
+            self._closed = False
+            # Guards the _closed flag against emit(), which checks it and then
+            # enqueues: close() must not interleave its write between the
+            # check and the put, or an in-flight emit would feed a queue no
+            # one drains (block policy: hang forever; otherwise: a record
+            # counted queued but never sent). The worker never takes this
+            # lock, so close() cannot deadlock against the drain.
+            self._close_lock = threading.Lock()
+            self._stats = StatsCollector()
+            self._queue: queue.Queue[object] = queue.Queue(maxsize=queue_maxsize)
+            # Validate the policy name now so a typo fails fast at construction,
+            # not silently at the first queue overflow.
+            self._put_policy = queue_policy.select_put_policy(queue_full_policy)
+            self._sender = TelegramSender(
+                resolved_token,
+                resolved_chat,
+                api_base_url,
+                parse_mode=parse_mode,
+                max_retries=max_retries,
+                message_thread_id=resolved_topic,
+            )
+            self._worker = WorkerThread(
+                record_queue=self._queue,
+                sender=self._sender,
+                stats=self._stats,
+                format_record=self.format,
+                batch_size=batch_size,
+                flush_interval=flush_interval,
+                overflow=overflow,
+                parse_mode=parse_mode,
+            )
+            self._worker.start()
+            atexit.register(self.close)
+        except Exception:
+            # super().__init__ just registered a weakref to this half-built
+            # instance in logging._handlerList; exit-time logging.shutdown()
+            # would call close() on it and print a stray AttributeError after
+            # the real construction error. Drop the weakref, then re-raise.
+            handler_list = cast(Any, logging)._handlerList
+            with cast(Any, logging)._lock:
+                handler_list[:] = [ref for ref in handler_list if ref() is not self]
+            raise
 
     def emit(self, record: logging.LogRecord) -> None:
         """Snapshot ``record`` and enqueue it. Never raises (stdlib contract)."""
+        if self._closed:
+            # Fast path; the authoritative check below is under the lock.
+            self._stats.increment("dropped")
+            return
         try:
             item = self._snapshot(record)
-            result = self._put_policy(self._queue, item)
-            # drop_oldest can lose an older record even while enqueueing the new
-            # one, so count both outcomes from the PutResult.
-            if result.enqueued:
-                self._stats.increment("queued")
-            self._stats.increment("dropped", result.dropped)
         except Exception:  # emit must never propagate
             self.handleError(record)
+            return
+        with self._close_lock:
+            if self._closed:
+                # close() interleaved between snapshot and put: no worker
+                # drains this queue any more, so drop and count instead of
+                # enqueueing into a dead pipeline (block policy would hang
+                # this thread forever).
+                self._stats.increment("dropped")
+                return
+            try:
+                result = self._put_policy(self._queue, item)
+            except Exception:  # emit must never propagate
+                self.handleError(record)
+                return
+        # drop_oldest can lose an older record even while enqueueing the new
+        # one, so count both outcomes from the PutResult.
+        if result.enqueued:
+            self._stats.increment("queued")
+        self._stats.increment("dropped", result.dropped)
 
     @staticmethod
     def _snapshot(record: logging.LogRecord) -> logging.LogRecord:
@@ -150,13 +185,18 @@ class TelegramLoggingHandler(logging.Handler):
 
     def close(self) -> None:
         """Drain the queue, stop the worker, release the client. Idempotent."""
-        if self._closed:
-            return
-        self._closed = True
-        # Queue saturated -> worker still stops via its own drain; worst case we
-        # wait out shutdown_timeout below. ponytail: rare edge, not worth more.
-        with contextlib.suppress(queue.Full):
-            self._queue.put_nowait(SHUTDOWN)
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            # Signal stop twice: the event is authoritative (the sentinel below
+            # is only a wakeup and can be lost to a saturated queue or
+            # drop_oldest eviction); the worker drains everything queued first,
+            # then exits. The join below runs outside the lock so an emit
+            # blocked on a full queue (block policy) can finish draining.
+            self._worker.shutdown()
+            with contextlib.suppress(queue.Full):
+                self._queue.put_nowait(SHUTDOWN)
         self._worker.join(timeout=self._shutdown_timeout)
         atexit.unregister(self.close)
         super().close()
