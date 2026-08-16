@@ -43,12 +43,14 @@ def resolve_credentials(
         raise TelegramConfigError(_invalid_token_message(token))
 
     resolved_chat = chat_id if chat_id is not None else os.environ.get("TG_CHAT_ID")
-    if resolved_chat is None or resolved_chat == "":
+    if resolved_chat is not None:
+        resolved_chat = str(resolved_chat).strip()
+    if not resolved_chat:
         raise TelegramConfigError(
             "No chat_id provided. Pass chat_id=... or set the TG_CHAT_ID environment variable."
         )
 
-    return token, str(resolved_chat)
+    return token, resolved_chat
 
 
 def resolve_topic_id(topic_id: int | None) -> int | None:
@@ -120,7 +122,17 @@ def validate_token(token: str, api_base_url: str) -> None:
             "Pass validate=False to skip this check in offline environments."
         ) from exc
 
-    if response.status_code != 200 or not response.json().get("ok", False):
+    try:
+        body_ok = response.json().get("ok", False)
+    except ValueError as exc:
+        # A proxy/gateway error page behind a 200 must not surface as a bare
+        # ValueError; the user is promised TelegramConfigError.
+        raise TelegramConfigError(
+            f"Telegram returned a non-JSON response (HTTP {response.status_code}). "
+            "Check that the bot token is correct."
+        ) from exc
+
+    if response.status_code != 200 or not body_ok:
         raise TelegramConfigError(
             f"Telegram rejected the token (getMe returned HTTP {response.status_code}). "
             "Check that the bot token is correct."

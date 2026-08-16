@@ -77,6 +77,10 @@ def truncate_text(text: str, max_length: int, parse_mode: str | None = None) -> 
     if len(text) <= max_length:
         return text
     marker = escape(_TRUNCATION_MARKER, parse_mode)
+    # A pathological max_length smaller than the marker itself must still
+    # yield a result within the cap (Telegram would 400 an oversized body);
+    # clamp the marker, then keep the remainder of the budget for text.
+    marker = marker[:max_length]
     keep = _safe_cut(text, max(max_length - len(marker), 0))
     return text[:keep] + marker
 
