@@ -174,19 +174,23 @@ def _wait_for_stats(
     predicate: Callable[[HandlerStats], bool],
     timeout: float = 30.0,
 ) -> HandlerStats:
-    """Poll ``handler.stats`` until ``predicate`` holds.
+    """Poll ``handler.stats`` until ``predicate`` holds; fail on timeout.
 
     ``close()`` returns after ``shutdown_timeout`` even when the worker is
     still mid-send (a daemon thread finishing its last batches in the
     background), so a stats snapshot taken right after close can be
     mid-flight. Live tests must not race the worker: poll until the expected
-    counters converge, then assert.
+    counters converge, then assert. If the deadline passes without the
+    predicate becoming true, raise instead of returning stale stats so a
+    test can never pass vacuously on a timeout.
     """
     deadline = time.monotonic() + timeout
     while True:
         stats = handler.stats
-        if predicate(stats) or time.monotonic() >= deadline:
+        if predicate(stats):
             return stats
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"stats did not converge within {timeout}s: {stats}")
         time.sleep(0.05)
 
 
@@ -210,8 +214,9 @@ def test_live_validate_and_deliver_batched_logs() -> None:
         logger.removeHandler(handler)
         handler.close()  # drains + joins the worker, so all sends complete
 
-    stats = _wait_for_stats(handler, lambda s: s.sent >= 1)
+    stats = _wait_for_stats(handler, lambda s: s.sent == 6)
     assert stats.queued >= 6
+    assert stats.sent == 6
     assert stats.failed == 0
 
 
