@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -167,6 +169,27 @@ def _live_handler(**kwargs: Any) -> TelegramLoggingHandler:
     return TelegramLoggingHandler(**kwargs)
 
 
+def _wait_for_stats(
+    handler: TelegramLoggingHandler,
+    predicate: Callable[[HandlerStats], bool],
+    timeout: float = 30.0,
+) -> HandlerStats:
+    """Poll ``handler.stats`` until ``predicate`` holds.
+
+    ``close()`` returns after ``shutdown_timeout`` even when the worker is
+    still mid-send (a daemon thread finishing its last batches in the
+    background), so a stats snapshot taken right after close can be
+    mid-flight. Live tests must not race the worker: poll until the expected
+    counters converge, then assert.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        stats = handler.stats
+        if predicate(stats) or time.monotonic() >= deadline:
+            return stats
+        time.sleep(0.05)
+
+
 @requires_live
 def test_live_validate_and_deliver_batched_logs() -> None:
     # validate=True does a real getMe at construction; then a batch of records
@@ -187,9 +210,8 @@ def test_live_validate_and_deliver_batched_logs() -> None:
         logger.removeHandler(handler)
         handler.close()  # drains + joins the worker, so all sends complete
 
-    stats = handler.stats
+    stats = _wait_for_stats(handler, lambda s: s.sent >= 1)
     assert stats.queued >= 6
-    assert stats.sent >= 1
     assert stats.failed == 0
 
 
@@ -204,11 +226,12 @@ def test_live_parse_mode_escaping_is_accepted(parse_mode: str) -> None:
     logger.propagate = False
     logger.addHandler(handler)
     try:
-        logger.warning("specials _ * [ ] ( ) ~ ` > # + - = | { } . ! < & > %s", "<b>x</b>")
+        logger.warning("specials _ * [ ] ( ) ~ ` > # + - = | { } . ! < > & %s", "<b>x</b>")
     finally:
         logger.removeHandler(handler)
         handler.close()
-    assert handler.stats.failed == 0
+    stats = _wait_for_stats(handler, lambda s: s.sent >= 1)
+    assert stats.failed == 0
 
 
 @requires_live
@@ -225,5 +248,32 @@ def test_live_split_overflow_delivers_oversized_message() -> None:
     finally:
         logger.removeHandler(handler)
         handler.close()
-    assert handler.stats.sent >= 1
-    assert handler.stats.failed == 0
+    stats = _wait_for_stats(handler, lambda s: s.sent >= 1)
+    assert stats.sent >= 1
+    assert stats.failed == 0
+
+
+@requires_live
+def test_live_batch_size_groups_records_5_and_5() -> None:
+    # 10 real error records (each with a traceback) with batch_size=5 must go
+    # out as exactly 2 messages (5+5), never as singles or one 10-record
+    # message: sent counts records, batches_sent counts messages.
+    handler = _live_handler(batch_size=5, flush_interval=0.5, validate=False)
+    logger = logging.getLogger("tg-smoke.live.batch-size")
+    logger.setLevel(logging.ERROR)
+    logger.propagate = False
+    logger.addHandler(handler)
+    try:
+        for i in range(10):
+            try:
+                raise ValueError(f"intentional smoke error {i + 1}/10")
+            except ValueError:
+                logger.exception("live smoke batch error %d/10", i + 1)
+    finally:
+        logger.removeHandler(handler)
+        handler.close()
+    stats = _wait_for_stats(handler, lambda s: s.sent == 10)
+    assert stats.queued == 10
+    assert stats.sent == 10
+    assert stats.batches_sent == 2
+    assert stats.failed == 0

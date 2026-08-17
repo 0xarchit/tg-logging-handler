@@ -19,7 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the logging module. Previously, exit-time `logging.shutdown()` called
   `close()` on the half-built instance and printed a stray `AttributeError`
   after the real construction error; the registration is now dropped on
-  failure.
+  failure. The cleanup itself is failure-proof (`contextlib.suppress`), so a
+  teardown error (e.g. logging internals already torn down at interpreter
+  shutdown) can never mask the original construction error.
+- Live smoke tests no longer race the worker: `close()` returns once the
+  `shutdown_timeout` elapses even while the daemon worker is still sending its
+  last batches, so the tests now poll the stats until the counters converge
+  before asserting. A new live test proves 10 records with `batch_size=5` go
+  out as exactly two 5-record messages (`batches_sent == 2`).
 - Worker shutdown is event-backed: a saturated queue or a `drop_oldest`
   eviction can no longer lose the shutdown sentinel and leak the worker
   thread (and its HTTP client) after `close()`.

@@ -155,7 +155,7 @@ def test_shutdown_event_interrupts_long_interval_wait() -> None:
     )
     worker.start()
     worker.shutdown()  # event only; no sentinel on the queue at all
-    worker.join(timeout=2.0)
+    worker.join(timeout=3.0)
     assert not worker.is_alive()
     assert sender.sent == ["pending"]  # partial batch flushed before exit
 

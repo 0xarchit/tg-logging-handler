@@ -129,9 +129,13 @@ class TelegramLoggingHandler(logging.Handler):
             # instance in logging._handlerList; exit-time logging.shutdown()
             # would call close() on it and print a stray AttributeError after
             # the real construction error. Drop the weakref, then re-raise.
-            handler_list = cast(Any, logging)._handlerList
-            with cast(Any, logging)._lock:
-                handler_list[:] = [ref for ref in handler_list if ref() is not self]
+            # The cleanup itself may also fail (e.g. logging internals torn
+            # down at interpreter shutdown); that must never mask the real
+            # construction error, so swallow any failure here.
+            with contextlib.suppress(Exception):
+                handler_list = cast(Any, logging)._handlerList
+                with cast(Any, logging)._lock:
+                    handler_list[:] = [ref for ref in handler_list if ref() is not self]
             raise
 
     def emit(self, record: logging.LogRecord) -> None:
