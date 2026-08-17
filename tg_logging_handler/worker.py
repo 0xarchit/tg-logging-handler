@@ -52,10 +52,18 @@ class WorkerThread(threading.Thread):
         self._sender = sender
         self._stats = stats
         self._format_record = format_record
+        # Authoritative stop signal: close() sets it. The SHUTDOWN sentinel is
+        # only a wakeup hint and can be lost (suppressed put on a saturated
+        # queue, drop_oldest eviction), so the loop must not rely on it alone.
+        self._shutdown_event = threading.Event()
         # batch_size==1 (default) makes the accumulator flush every record.
         self._accumulator = BatchAccumulator(batch_size=batch_size, flush_interval=flush_interval)
         self._overflow = overflow
         self._parse_mode = parse_mode
+
+    def shutdown(self) -> None:
+        """Request a stop after everything currently queued has been drained."""
+        self._shutdown_event.set()
 
     def run(self) -> None:
         try:
@@ -67,8 +75,8 @@ class WorkerThread(threading.Thread):
         """Run the drain/send cycle until shutdown.
 
         Failed-count accounting is deliberate:
-        - an exception while processing a batch increments ``failed`` once
-          (the batch, not each record in it);
+        - an exception while processing a batch increments ``failed`` by
+          ``len(batch)`` (every record in that batch never reached the wire);
         - a partial or failed send — ``SendOutcome(delivered=False)`` from
           retries exhausted, a permanent failure, or too many consecutive 429
           waits (``_MAX_RATE_LIMIT_WAITS``) even when the retry budget
@@ -80,18 +88,28 @@ class WorkerThread(threading.Thread):
         delivered split still flags the batch).
         """
         while True:
+            if self._shutdown_event.is_set() and self._queue.empty():
+                # The sentinel can be lost (suppressed put on a saturated
+                # queue, drop_oldest eviction); the event is the reliable stop
+                # signal. Everything queued before shutdown is drained first.
+                return
             # Empty batch -> block up to 1s waiting for a record (a quiet
             # handler must not busy-poll); partial batch -> collect until size
-            # or interval, whichever comes first. Shutdown flushes any
-            # partial batch first, then stops.
-            batch, shutdown = self._accumulator.collect(self._queue, SHUTDOWN, timeout=1.0)
+            # or interval, whichever comes first. The accumulator polls the
+            # shutdown event between its capped waits, so a shutdown is
+            # honoured within ~1s even when a long flush_interval has a
+            # partial batch pending and the sentinel was lost. Every batch is
+            # flushed first; nothing already accepted is dropped.
+            batch, shutdown = self._accumulator.collect(
+                self._queue, SHUTDOWN, timeout=1.0, stop=self._shutdown_event.is_set
+            )
             if batch:
                 try:
                     self._process_batch(batch)
                 except Exception as exc:  # broad by design, see comment below
                     # A single bad record (format error) must never take the
                     # worker thread down.
-                    self._stats.increment("failed")
+                    self._stats.increment("failed", len(batch))
                     _diagnostics.report(f"failed to send batch: {exc}")
                 finally:
                     for _ in batch:
@@ -141,6 +159,9 @@ class WorkerThread(threading.Thread):
         for message in messages:
             outcome = self._sender.send_with_retry(message)
             self._stats.increment("retries", outcome.retries)
+            # 429 Retry-After waits count separately: they never consume the
+            # retry budget, but a rate-limit storm must still be visible.
+            self._stats.increment("rate_limited", outcome.rate_limited)
             delivered_all = delivered_all and outcome.delivered
 
         if delivered_all:

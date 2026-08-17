@@ -5,6 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-08-17
+
+### Added
+
+- New `rate_limited` counter in `HandlerStats`: 429 `Retry-After` waits are
+  now counted even though they never consume the retry budget, so a
+  rate-limit storm shows up in the stats instead of reporting zero retries.
+
+### Fixed
+
+- Failed handler construction no longer leaves a half-built handler registered
+  with the logging module. Previously, exit-time `logging.shutdown()` called
+  `close()` on the half-built instance and printed a stray `AttributeError`
+  after the real construction error; the registration is now dropped on
+  failure. The cleanup itself is failure-proof (`contextlib.suppress`), so a
+  teardown error (e.g. logging internals already torn down at interpreter
+  shutdown) can never mask the original construction error.
+- Live smoke tests no longer race the worker: `close()` returns once the
+  `shutdown_timeout` elapses even while the daemon worker is still sending its
+  last batches, so the tests now poll the stats until the counters converge
+  before asserting. A new live test proves 10 records with `batch_size=5` go
+  out as exactly two 5-record messages (`batches_sent == 2`).
+- Worker shutdown is event-backed: a saturated queue or a `drop_oldest`
+  eviction can no longer lose the shutdown sentinel and leak the worker
+  thread (and its HTTP client) after `close()`.
+- **Shutdown no longer waits out a long `flush_interval`**: the accumulator
+  polls the shutdown event between capped waits, so `close()` returns promptly
+  (≤ ~1s) even with a partial batch pending and the sentinel lost; the pending
+  batch is still flushed first.
+- A close() that interleaves with an in-flight `emit()` no longer orphans the
+  record: `emit` and `close` are mutually exclusive, so nothing accepted
+  before `close()` is lost (and `queue_full_policy="block"` can no longer hang
+  an emitter past shutdown).
+- Post-close `emit()` drops and counts the record instead of potentially
+  hanging the caller under `queue_full_policy="block"`.
+- `truncate_text` clamps the marker when the limit is smaller than the marker
+  itself, so a truncated message can never exceed the cap (Telegram 400s
+  oversized payloads).
+- The one-time 429 heads-up notification now swallows any failure (not just
+  transport errors), so it can never surface through `send_with_retry`.
+- **Batches are no longer split by a pending shutdown.** The shutdown poll now
+  runs only after a capped wait elapsed with nothing arriving, so records that
+  keep flowing still group into one batch even when `close()` was called during
+  the drain (previously every remaining record flushed as its own message).
+- A non-200 `sendMessage` response (a 3xx — redirects are never followed — or
+  a non-200 2xx) is no longer reported as delivered; getMe validation
+  maps non-JSON 200 bodies to `TelegramConfigError` instead of a bare
+  `ValueError`; env `TG_CHAT_ID` trailing whitespace is stripped like the
+  token's; queue `task_done` accounting is now exact, so `queue.join()` can
+  no longer hang.
+- `close()` now enqueues the shutdown sentinel **before** signaling the
+  worker, so the worker can never exit while the sentinel is still about to be
+  queued and strand it in the queue (a user's `queue.join()` would hang).
+- getMe validation requires an object body with `ok == True` exactly: a
+  scalar/list JSON body or a merely truthy `ok` (e.g. `1`) maps to
+  `TelegramConfigError` instead of a raw `AttributeError` or a false accept.
+- The clamped truncation marker is nudged off a trailing backslash, so a tiny
+  `max_length` with MarkdownV2 can never leave a dangling escape pair.
+- HTTP redirects are disabled on the send client: a 302/308 with a `Location`
+  is never followed, so a redirected `sendMessage` request can never be
+  mistaken for a delivery.
+
 ## [0.1.3] - 2026-08-16
 
 ### Added

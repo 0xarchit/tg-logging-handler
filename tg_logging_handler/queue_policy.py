@@ -76,6 +76,7 @@ def put_drop_oldest(q: queue.Queue[object], item: object) -> PutResult:
             q.get_nowait()
         except queue.Empty:
             continue  # someone drained it; retry the put
+        q.task_done()  # every get must be matched or queue.join() would hang
         dropped += 1
     if _try_put(q, item):
         return PutResult(enqueued=True, dropped=dropped)

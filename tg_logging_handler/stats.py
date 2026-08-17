@@ -20,6 +20,7 @@ class HandlerStats:
     sent: int = 0
     batches_sent: int = 0
     retries: int = 0
+    rate_limited: int = 0
     failed: int = 0
     dropped: int = 0
 

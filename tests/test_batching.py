@@ -109,3 +109,68 @@ def test_constructor_validates_args() -> None:
         BatchAccumulator(0, 1.0)
     with pytest.raises(ValueError):
         BatchAccumulator(1, -1.0)
+
+
+class _TimeoutQueue:
+    """Scripted queue whose get() always times out (raises Empty)."""
+
+    def __init__(self) -> None:
+        self._items: list[object] = []
+
+    def put_nowait(self, item: object) -> None:
+        self._items.append(item)
+
+    def get(self, timeout: float | None = None) -> object:
+        if not self._items:
+            raise queue.Empty
+        return self._items.pop(0)
+
+    def task_done(self) -> None:
+        pass
+
+
+def test_second_get_timeout_returns_partial_batch() -> None:
+    # The mid-batch get() can time out with nothing new arriving; the partial
+    # batch must be returned, not lost. Constant clock keeps remaining > 0 so
+    # the get() is actually attempted (and times out immediately, scripted).
+    acc, _ = _mk(batch_size=5, flush_interval=1.0, clock=ScriptedClock(0.0, 0.0))
+    q = _TimeoutQueue()
+    q.put_nowait(_record("only"))
+    batch, shutdown = acc.collect(q, Shutdown, timeout=0)  # type: ignore[arg-type]
+    assert [r.getMessage() for r in batch] == ["only"]
+    assert not shutdown
+
+
+def test_stop_flushes_partial_batch_promptly() -> None:
+    # A shutdown requested while a partial batch is mid-collection must flush
+    # it immediately, not wait out the flush interval (potentially minutes);
+    # collect polls the stop predicate after a capped wait with nothing
+    # arriving.
+    acc, q = _mk(batch_size=10, flush_interval=30.0)
+    _put(q, "only")
+    batch, shutdown = acc.collect(q, Shutdown, timeout=0, stop=lambda: True)
+    assert [r.getMessage() for r in batch] == ["only"]
+    assert shutdown is False
+
+
+def test_stop_does_not_split_a_flowing_batch() -> None:
+    # Live-smoke regression: close() sets the shutdown event while the worker
+    # is still draining a queue full of records. stop must only be consulted
+    # once a wait actually elapsed with nothing arriving, or every flowing
+    # record flushes as its own batch. stop=True here must not split the 5
+    # queued records (batch_size is exactly 5, so they must come back whole).
+    acc, q = _mk(batch_size=5, flush_interval=10.0)
+    _put(q, "a", "b", "c", "d", "e")
+    batch, shutdown = acc.collect(q, Shutdown, timeout=0, stop=lambda: True)
+    assert [r.getMessage() for r in batch] == ["a", "b", "c", "d", "e"]
+    assert not shutdown
+
+
+def test_stop_false_after_capped_wait_keeps_collecting() -> None:
+    # Stop present but still False when a capped wait elapses: the loop must
+    # keep going (re-check the interval) instead of aborting an active batch.
+    acc, q = _mk(batch_size=10, flush_interval=5.0, clock=ScriptedClock(0.0, 0.0, 0.0, 5.0))
+    _put(q, "a", "b")
+    batch, shutdown = acc.collect(q, Shutdown, timeout=0, stop=lambda: False)
+    assert [r.getMessage() for r in batch] == ["a", "b"]
+    assert not shutdown

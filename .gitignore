@@ -24,3 +24,6 @@ docs/
 .claude/
 .agents/
 skills-lock.json
+
+# logs
+*.log

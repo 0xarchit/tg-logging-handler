@@ -52,6 +52,14 @@ class TestResolveCredentials:
         # must not fail validation or leak into the request URL.
         assert resolve_credentials("111:abc\n", 1) == ("111:abc", "1")
 
+    def test_env_chat_id_trailing_newline_is_stripped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Same story for chats: .env files routinely end values with a
+        # newline, and an unstripped one would 400 at send time.
+        monkeypatch.setenv("TG_CHAT_ID", "-42\n")
+        assert resolve_credentials("111:abc", None)[1] == "-42"
+
     def test_invalid_short_token_error_is_redacted(self) -> None:
         # A token too short for a safe partial reveal must not appear in the
         # error message at all.
@@ -163,6 +171,73 @@ class _ScriptedQueue:
             raise queue.Empty
         return "evicted"
 
+    def task_done(self) -> None:
+        pass
+
+
+class TestValidateToken:
+    def test_non_json_200_body_is_config_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A proxy/gateway can answer 200 with an HTML error page; the docs
+        # promise TelegramConfigError, never a bare ValueError.
+        import httpx
+
+        from tg_logging_handler.config import validate_token
+
+        monkeypatch.setattr(
+            httpx,
+            "get",
+            lambda *args, **kwargs: httpx.Response(200, text="<html>gateway error</html>"),
+        )
+        with pytest.raises(TelegramConfigError, match="non-JSON"):
+            validate_token("111:abc", "https://api.telegram.org")
+
+    def test_network_error_is_config_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # An unreachable API (offline host, DNS failure) must surface as the
+        # documented TelegramConfigError, with the offline-escape hatch hint.
+        import httpx
+
+        from tg_logging_handler.config import validate_token
+
+        def offline(*args: object, **kwargs: object) -> httpx.Response:
+            raise httpx.ConnectError("offline")
+
+        monkeypatch.setattr(httpx, "get", offline)
+        with pytest.raises(TelegramConfigError, match="Could not reach Telegram"):
+            validate_token("111:abc", "https://api.telegram.org")
+
+    @pytest.mark.parametrize("payload", [[], "hello", 42])
+    def test_non_object_json_200_body_is_config_error(
+        self, monkeypatch: pytest.MonkeyPatch, payload: object
+    ) -> None:
+        # A 200 that decodes as a scalar/list (never an object) cannot carry
+        # ok; it must hit the TelegramConfigError path, not an AttributeError.
+        import httpx
+
+        from tg_logging_handler.config import validate_token
+
+        monkeypatch.setattr(
+            httpx,
+            "get",
+            lambda *args, **kwargs: httpx.Response(200, json=payload),
+        )
+        with pytest.raises(TelegramConfigError, match="rejected"):
+            validate_token("111:abc", "https://api.telegram.org")
+
+    def test_truthy_but_not_true_ok_is_config_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # ok == 1 is truthy but not exactly True; only a boolean True means
+        # the token was accepted.
+        import httpx
+
+        from tg_logging_handler.config import validate_token
+
+        monkeypatch.setattr(
+            httpx,
+            "get",
+            lambda *args, **kwargs: httpx.Response(200, json={"ok": 1}),
+        )
+        with pytest.raises(TelegramConfigError, match="rejected"):
+            validate_token("111:abc", "https://api.telegram.org")
+
 
 class TestQueuePolicy:
     def test_put_drop_newest_succeeds_when_space(self) -> None:
@@ -189,6 +264,16 @@ class TestQueuePolicy:
         assert result.enqueued is True
         assert result.dropped == 1  # evicted the oldest (1)
         assert list(q.queue) == [2, 3]
+
+    def test_put_drop_oldest_task_dones_evicted_items(self) -> None:
+        # Every eviction is a get(); without a matching task_done(),
+        # queue.join() would hang forever on a full-and-drained queue.
+        q: queue.Queue[object] = queue.Queue(maxsize=2)
+        q.put_nowait(1)
+        q.put_nowait(2)
+        queue_policy.put_drop_oldest(q, 3)
+        # Only items still in the queue may lack a task_done().
+        assert q.unfinished_tasks == q.qsize() == 2
 
     def test_put_drop_oldest_no_eviction_when_space(self) -> None:
         q: queue.Queue[object] = queue.Queue(maxsize=2)

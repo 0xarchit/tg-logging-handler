@@ -38,10 +38,15 @@ class SendOutcome:
     exhausted, after a permanent failure, or after too many consecutive 429
     waits even when the retry budget remains; the worker counts it as
     ``failed`` so ``sent`` stays accurate.
+
+    ``retries`` counts transient backoff retries (429s never consume the retry
+    budget); ``rate_limited`` counts the 429 ``Retry-After`` waits so a
+    rate-limit storm stays visible in the stats even at zero retries.
     """
 
     delivered: bool
     retries: int
+    rate_limited: int = 0
 
 
 class TelegramSender:
@@ -78,6 +83,8 @@ class TelegramSender:
         """Return the worker-thread-local client, creating it on first use."""
         if self._client is None:
             timeout = httpx.Timeout(DEFAULT_READ_TIMEOUT, connect=DEFAULT_CONNECT_TIMEOUT)
+            # Redirects stay disabled (httpx default): a 302/308 with a
+            # Location must surface as-is and fail, never be followed.
             self._client = httpx.Client(timeout=timeout)
         return self._client
 
@@ -96,11 +103,14 @@ class TelegramSender:
         """
         attempts = 0
         rate_limited = 0
+        rate_limited_waits = 0
         delay = _BASE_DELAY_SECONDS
         while True:
             try:
                 self._send_once(text)
-                return SendOutcome(delivered=True, retries=attempts)
+                return SendOutcome(
+                    delivered=True, retries=attempts, rate_limited=rate_limited_waits
+                )
             except TelegramSendError as exc:
                 if exc.retry_after is not None:
                     # 429 rate limit: honor Retry-After without consuming the
@@ -115,15 +125,22 @@ class TelegramSender:
                         self._notified_rate_limit = True
                         self._notify_rate_limited()
                     if rate_limited >= _MAX_RATE_LIMIT_WAITS:
-                        return SendOutcome(delivered=False, retries=attempts)
+                        return SendOutcome(
+                            delivered=False,
+                            retries=attempts,
+                            rate_limited=rate_limited_waits,
+                        )
                     rate_limited += 1
+                    rate_limited_waits += 1
                     # Clamp the server's Retry-After to [0, _MAX_DELAY_SECONDS]
                     # so one huge (or negative) header value can't stall the
                     # worker for hours or crash time.sleep.
                     self._sleep(min(max(exc.retry_after, 0.0), _MAX_DELAY_SECONDS))
                     continue
                 if not exc.retryable or attempts >= self._max_retries:
-                    return SendOutcome(delivered=False, retries=attempts)
+                    return SendOutcome(
+                        delivered=False, retries=attempts, rate_limited=rate_limited_waits
+                    )
                 attempts += 1
                 rate_limited = 0  # a non-429 retry breaks the consecutive-429 run
                 jittered = delay * (1.0 + _JITTER_FRACTION * (2.0 * random.random() - 1.0))
@@ -148,7 +165,10 @@ class TelegramSender:
             payload["message_thread_id"] = self._message_thread_id
         try:
             self._get_client().post(self._url, json=payload)
-        except httpx.HTTPError as exc:
+        except Exception as exc:
+            # Broad by design: any failure in the notice path is noise
+            # (serialization, transport, the very rate limit we report); it
+            # must never surface through send_with_retry or fail a batch.
             _diagnostics.report(f"could not send 429 heads-up notification: {exc}")
 
     def _send_once(self, text: str) -> None:
@@ -193,6 +213,13 @@ class TelegramSender:
         if response.status_code >= 500:
             raise TelegramSendError(
                 f"server error {response.status_code}: {response.text}", retryable=True
+            )
+        if response.status_code != 200:
+            # Anything else — a 3xx (redirects are never followed), or a
+            # non-200 2xx — means nothing was delivered; never report success.
+            raise TelegramSendError(
+                f"unexpected status {response.status_code}: {response.text}",
+                retryable=False,
             )
 
     def close(self) -> None:

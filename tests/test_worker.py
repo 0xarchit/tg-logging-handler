@@ -110,3 +110,84 @@ def test_worker_stops_after_flushing_partial_batch_on_shutdown() -> None:
     assert not worker.is_alive()
     assert sender.sent == ["one"]
     assert stats.snapshot().sent == 1
+
+
+def test_worker_stops_when_sentinel_is_lost_to_full_queue() -> None:
+    # Regression: with a saturated queue the handler's sentinel put is
+    # suppressed, and drop_oldest can even evict it. The shutdown event alone
+    # must still stop the worker after everything queued is drained.
+    q: queue.Queue[object] = queue.Queue(maxsize=1)
+    q.put_nowait(_record("only"))
+    sender = _FakeSender()
+    stats = StatsCollector()
+    worker = WorkerThread(
+        q,
+        cast(TelegramSender, sender),
+        stats,
+        lambda r: r.getMessage(),
+        batch_size=1,
+        flush_interval=0.01,
+    )
+    worker.start()
+    worker.shutdown()  # no sentinel involved: the event must be enough
+    worker.join(timeout=3.0)
+    assert not worker.is_alive()
+    assert sender.sent == ["only"]  # drained before exit
+
+
+def test_shutdown_event_interrupts_long_interval_wait() -> None:
+    # Regression: with a partial batch pending inside a long flush_interval,
+    # shutdown used to wait the whole interval out (the mid-batch get only
+    # saw the sentinel, which a saturated queue can lose). The event is now
+    # polled mid-batch, so the worker exits promptly and still flushes the
+    # pending record.
+    q: queue.Queue[object] = queue.Queue()
+    q.put_nowait(_record("pending"))
+    sender = _FakeSender()
+    stats = StatsCollector()
+    worker = WorkerThread(
+        q,
+        cast(TelegramSender, sender),
+        stats,
+        lambda r: r.getMessage(),
+        batch_size=10,  # one record never fills the batch
+        flush_interval=60.0,  # the long wait shutdown must cut short
+    )
+    worker.start()
+    worker.shutdown()  # event only; no sentinel on the queue at all
+    worker.join(timeout=3.0)
+    assert not worker.is_alive()
+    assert sender.sent == ["pending"]  # partial batch flushed before exit
+
+
+def test_worker_counts_rate_limited_waits_in_stats() -> None:
+    class _RateLimitedSender(_FakeSender):
+        def send_with_retry(self, text: str) -> SendOutcome:
+            self.sent.append(text)
+            # 429s never consume the retry budget, but every wait must count.
+            return SendOutcome(delivered=True, retries=0, rate_limited=3)
+
+    stats = _run_worker(_RateLimitedSender(), lambda r: r.getMessage(), [_record("x")])
+    assert stats.snapshot().rate_limited == 3
+
+
+def test_sentinel_consumption_has_matching_task_done() -> None:
+    # Regression: the sentinel is consumed with a get() but never got a
+    # task_done(), so unfinished_tasks stayed > 0 forever and any
+    # queue.join() would hang.
+    q: queue.Queue[object] = queue.Queue()
+    stats = StatsCollector()
+    worker = WorkerThread(
+        q,
+        cast(TelegramSender, _FakeSender()),
+        stats,
+        lambda r: r.getMessage(),
+        batch_size=1,
+        flush_interval=0.01,
+    )
+    worker.start()
+    q.put(_record("x"))
+    q.put(SHUTDOWN)
+    worker.join(timeout=3.0)
+    assert not worker.is_alive()
+    assert q.unfinished_tasks == 0
